@@ -1,0 +1,43 @@
+# Dependencies
+/node_modules
+
+# Environment Variables & Secrets
+# Ignore all .env files
+.env*
+# But DO NOT ignore the example file
+!.env.example
+
+# Session Files
+# Ignore all .json files in the root directory...
+*.json
+# ...except for these specific configuration files.
+!config.json
+!package.json
+!package-lock.json
+!schedule_x.json
+!schedule_linkedin.json
+
+# Allow prompt profiles to be tracked
+!/prompt_profiles/*.json
+
+# Temporary & Generated Files
+/daily_cartoon.png
+/temp_source_for_python.png
+/placeholder.png
+/test_image.png
+/test_mask.png
+*.log
+*.tmp
+*.swp
+*~
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Editor-specific & Archives
+.vscode/
+.idea/
+*.code-workspace
+/_dev_archive/
+/backups/

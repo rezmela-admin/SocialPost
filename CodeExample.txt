@@ -1,0 +1,14 @@
+def edit_img(input_img, prompt):
+    result = client.images.edit(
+        model="gpt-image-1",
+        image=input_img,
+        prompt=prompt,
+        input_fidelity="high",
+        quality="high",
+        output_format="jpeg"
+    )
+
+    image_base64 = result.data[0].b64_json
+    image_bytes = base64.b64decode(image_base64)
+    image = Image.open(BytesIO(image_bytes))
+    return image

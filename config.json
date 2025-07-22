@@ -1,0 +1,40 @@
+{
+  "socialMedia": {
+    "X": {
+      "loginUrl": "https://x.com/login",
+      "composeUrl": "https://x.com/compose/post",
+      "homeUrl": "https://x.com/home"
+    },
+    "LinkedIn": {
+      "loginUrl": "https://www.linkedin.com/login",
+      "composeUrl": "https://www.linkedin.com/feed/",
+      "homeUrl": "https://www.linkedin.com/feed/"
+    }
+  },
+  "search": {
+    "defaultTopic": "Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism prefer short, private exercise sessions."
+  },
+  "prompt": {
+    "style": "A fun, witty, satirical cartoon.",
+    "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a short, witty summary of the news) and 'imagePrompt' (a detailed visual description for an AI image generator based on the news)."
+  },
+  "imageGeneration": {
+    "model": "gpt-image-1",
+    "size": "1024x1024",
+    "imageFileName": "daily_cartoon.png"
+  },
+  "textGeneration": {
+    "model": "gemini-2.5-pro"
+  },
+  "framingOptions": [
+    "A medium-shot portrait, framed from the waist up.",
+    "A close-up shot, focusing on the face and shoulders.",
+    "A full-body shot, showing the character from head to toe. The character takes only 1/5th of the image.",
+    "An over-the-shoulder shot, with the character looking slightly away from the camera."
+  ],
+  "debug": {
+    "enabled": true,
+    "preserveTemporaryFiles": true
+  },
+  "timezone": "America/New_York"
+}

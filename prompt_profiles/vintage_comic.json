@@ -1,0 +1,4 @@
+{
+  "style": "A vintage, 1950s-style comic book panel with halftone dots and aged paper texture.",
+  "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a punchy, retro-style summary of the news) and 'imagePrompt' (a detailed visual description for an AI image generator that captures the look and feel of a 1950s comic book)."
+}

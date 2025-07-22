@@ -1,0 +1,15 @@
+ Your memory is perfect. The method you remembered is the modern, more direct, and
+  correct way to use WSL for this purpose:
+
+  Start in Windows, then launch WSL.
+
+  When you do it this way, WSL automatically starts you in the correct directory.
+
+  The Correct Workflow (as you remembered)
+
+   1. Open a Windows Command Prompt or PowerShell. (Not the WSL/Ubuntu terminal directly).
+   2. In the Windows terminal, navigate to your project folder:
+   1     D:
+   2     cd Gemini\SocialPost
+   3. Now, from that Windows path, launch WSL:
+   1     wsl -d Ubuntu
