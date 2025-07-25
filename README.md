@@ -1,23 +1,30 @@
-# Automated Daily Cartoon Bot
+# Automated Social Media Bot
 
 This project contains an automated bot that performs the following cycle:
 1.  Fetches a topic from the user or a schedule file.
-2.  Uses the Google Gemini API to generate a news summary and a creative prompt for a political cartoon.
-3.  Uses the OpenAI DALL-E API to generate an image based on the cartoon prompt.
-4.  Posts the generated image and the news summary to a social media account (currently supports X/Twitter and LinkedIn).
+2.  Uses the Google Gemini API to generate a news summary and a creative prompt for an image.
+3.  Uses the OpenAI DALL-E API to generate an image based on the prompt.
+4.  Adds the post to a queue, which is then processed by a background worker to post on social media (currently supports X/Twitter and LinkedIn).
+
+## Core Architecture
+
+This application now runs on a worker-based architecture to improve reliability and separate concerns.
+
+*   **`app.js` (The Frontend):** This is the main interactive script you run. Its job is to handle user input, generate the content and image, and then add a "job" to the `post_queue.json` file. It does **not** do the posting itself.
+*   **`worker.js` (The Backend):** This script runs in the background. Its only job is to check the `post_queue.json` for pending jobs, process them one by one (i.e., log in and post to the specified platform), and update their status.
+*   **`post_queue.json`:** This file acts as the communication channel between the app and the worker.
 
 ## Features
 
+-   **Asynchronous Posting:** Jobs are added to a queue, so you can create multiple posts without waiting for each one to upload.
 -   **Multi-Platform:** Post to X (Twitter) and LinkedIn.
--   **Interactive & Scheduled Modes:** Run posts immediately with interactive prompts or schedule them for fully automated posting.
--   **Creative Profiles:** Switch between different artistic styles and character personas (e.g., "Standard Cartoon" vs. "Virtual Influencer").
--   **Hybrid Image Generation:** Includes an advanced workflow that uses a Python script for high-fidelity image editing and inpainting.
--   **Session Management:** Securely saves your social media sessions so you only have to log in once.
+-   **Interactive & Scheduled Modes:** Run posts immediately or schedule them for later.
+-   **Creative Profiles:** Switch between different artistic styles and character personas.
+-   **Session Management:** Securely saves your social media sessions so you only have to log in once per platform.
 
 ## Prerequisites
 
 -   [Node.js](https://nodejs.org/) (v18 or higher recommended)
--   [Python](https://www.python.org/) (if using the Virtual Influencer/inpainting features)
 -   An account with access to the OpenAI and Google Gemini APIs.
 
 ## Installation
@@ -33,55 +40,41 @@ This project contains an automated bot that performs the following cycle:
     npm install
     ```
 
-3.  **Install Python dependencies** (if needed for the influencer workflow):
-    ```bash
-    pip install -r requirements.txt 
-    # Note: You may need to create a requirements.txt file for the 'edit_image.py' script's dependencies.
-    ```
-
-4.  **Set up your environment variables:**
+3.  **Set up your environment variables:**
     -   Make a copy of the `.env.example` file and name it `.env`.
-    -   Open the `.env` file and add your API keys:
-        ```
-        OPENAI_API_KEY="YOUR_OPENAI_API_KEY_HERE"
-        GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
-        ```
+    -   Open the `.env` file and add your API keys.
 
 ## Configuration
 
 All major settings are controlled in `config.json`. Here you can define:
 -   Default topics for posts.
 -   The models used for text and image generation.
--   The URLs for social media posting.
+-   The URLs and selectors for social media posting.
 -   The active creative profile and style.
 
 ## Usage
 
-To run the application, use the following command:
+The application now has two parts that you need to run.
+
+### Step 1: Run the Worker (Do this once)
+
+In your terminal, start the worker process. It will run in the background, watching for new jobs.
 
 ```bash
-node runAutomation.js
+node worker.js
 ```
 
-The script will launch a browser window and present a menu with the following options:
--   **Post immediately:** Interactively create and post a new cartoon.
--   **Manage Profiles:** Create, load, or delete creative profiles.
--   **Scheduler:** Start, stop, or manually trigger the automated posting schedule.
--   **Switch Platform:** Change between X and LinkedIn.
+The worker will check the queue every minute for new posts to process.
 
-### Scheduling Posts
+### Step 2: Run the App (To create posts)
 
-To schedule posts, edit the `schedule_x.json` or `schedule_linkedin.json` files. Add a new JSON object for each post you want to schedule.
+In a **separate terminal**, run the main application to create and schedule your posts.
 
-**Example:**
-```json
-[
-  {
-    "topic": "A newsworthy event...",
-    "postAt": "2025-07-25 10:00",
-    "status": "pending",
-    "speechBubbleText": "This is what the character will say!"
-  }
-]
+```bash
+node app.js
 ```
--   `speechBubbleText` is an optional field. If included, the post will be fully automated. If omitted, the script will pause and ask for input when the post is due.
+
+The app will present a menu to:
+-   Create and queue a post immediately.
+-   Manage creative profiles.
+-   Schedule posts by editing the `schedule_x.json` or `schedule_linkedin.json` files.
