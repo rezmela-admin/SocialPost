@@ -1,62 +1,63 @@
 [
   {
-    "topic": "Musk's new political party faces steep challenges",
-    "postAt": "2025-07-08 22:00",
-    "status": "posted"
+    "topic": "The global debate over the future of artificial intelligence in creative industries.",
+    "postAt": "2025-07-23 09:00",
+    "status": "pending",
+    "speechBubbleText": "So, they're worried I'll take their jobs?",
+    "profile": "sarcastic_wit.json"
   },
   {
-    "topic": "Analyst's Tesla-xAI merger pitch sparks Musk's ire",
-    "postAt": "2025-07-08 22:30",
-    "status": "posted"
+    "topic": "A surprising international agreement on regulating deep-sea mining.",
+    "postAt": "2025-07-23 14:30",
+    "status": "pending",
+    "profile": "vintage_comic.json"
   },
   {
-    "topic": "Tesla shares slide amid Musk's political distractions",
-    "postAt": "2025-07-08 23:00",
-    "status": "posted"
+    "topic": "The unexpected economic impact of the four-day work week trials in Europe.",
+    "postAt": "2025-07-24 10:00",
+    "status": "pending",
+    "speechBubbleText": "Wait, you guys work five days?",
+    "profile": "witty_cartoon.json"
   },
   {
-    "topic": "Starlink SL-10-28 launch: 28 satellites deployed tonight",
-    "postAt": "2025-07-08 23:30",
-    "status": "posted"
-  },
-  {
-    "topic": "Senate strips AI moratorium from ‘Big Beautiful Bill’",
-    "postAt": "2025-07-09 00:30",
-    "status": "posted"
-  },
-  {
-    "topic": "SpaceX unveils $250 M ‘Gigabay’ project in Texas",
-    "postAt": "2025-07-09 02:00",
-    "status": "posted"
-  },
-  {
-    "topic": "Earth-size exoplanet TOI-700 e spotted in a habitable zone",
-    "postAt": "2025-07-09 06:00",
-    "status": "posted"
-  },
-  {
-    "topic": "Interstellar comet 3I/ATLAS races through Solar System",
-    "postAt": "2025-07-09 08:30",
-    "status": "posted"
-  },
-  {
-    "topic": "Jaya-Parvati Vrata begins: five-day devotion to Goddess Parvati",
-    "postAt": "2025-07-09 11:00",
-    "status": "posted"
-  },
-  {
-    "topic": "Advaita Meditation Center streams hybrid open session today",
-    "postAt": "2025-07-09 14:00",
-    "status": "processing"
-  },
-  {
-    "topic": "Youth retreats boost Advaita Vedanta engagement among Gen Z",
-    "postAt": "2025-07-09 17:00",
-    "status": "processing"
-  },
-  {
-    "topic": "Clean-energy & climate-geology converge: new tech outlook",
-    "postAt": "2025-07-09 19:30",
+    "topic": "New breakthroughs in battery technology promise to double the range of electric vehicles.",
+    "postAt": "2025-07-24 18:00",
     "status": "pending"
+  },
+  {
+    "topic": "World leaders react to the launch of a fully autonomous, AI-managed city.",
+    "postAt": "2025-07-25 11:00",
+    "status": "pending",
+    "speechBubbleText": "I, for one, welcome our new robot overlords.",
+    "profile": "sarcastic_wit.json"
+  },
+  {
+    "topic": "The discovery of a new exoplanet with Earth-like atmospheric conditions.",
+    "postAt": "2025-07-25 16:00",
+    "status": "pending"
+  },
+  {
+    "topic": "How decentralized autonomous organizations (DAOs) are challenging traditional corporate structures.",
+    "postAt": "2025-07-26 12:00",
+    "status": "pending",
+    "speechBubbleText": "No CEO? Sounds like my kind of company.",
+    "profile": "witty_cartoon.json"
+  },
+  {
+    "topic": "A deep-dive into the psychological effects of hyper-realistic virtual reality environments.",
+    "postAt": "2025-07-27 15:00",
+    "status": "pending"
+  },
+  {
+    "topic": "The sudden resurgence of vinyl records and cassette tapes in the digital age.",
+    "postAt": "2025-07-28 09:30",
+    "status": "pending",
+    "speechBubbleText": "They're just figuring out that analog is cool?",
+    "profile": "vintage_comic.json"
+  },
+  {
+    "topic": "A major fashion house releases its entire new collection as NFTs.",
+    "postAt": "2025-07-29 13:00",
+    "status": "posted"
   }
 ]

@@ -2,13 +2,28 @@
   "socialMedia": {
     "X": {
       "loginUrl": "https://x.com/login",
+      "homeUrl": "https://x.com/home",
       "composeUrl": "https://x.com/compose/post",
-      "homeUrl": "https://x.com/home"
+      "selectors": {
+        "fileInput": "[data-testid='primaryColumn'] [data-testid='fileInput']",
+        "imagePreview": "[data-testid='tweetPhoto']",
+        "textBox": "[data-testid='primaryColumn'] [data-testid='tweetTextarea_0']",
+        "postButton": "[data-testid='tweetButton']",
+        "confirmationLocator": "[data-testid='toast']"
+      }
     },
     "LinkedIn": {
       "loginUrl": "https://www.linkedin.com/login",
+      "homeUrl": "https://www.linkedin.com/feed/",
       "composeUrl": "https://www.linkedin.com/feed/",
-      "homeUrl": "https://www.linkedin.com/feed/"
+      "selectors": {
+        "startPostButton": "button:has-text('Start a post')",
+        "addMediaButton": "button[aria-label='Add media']",
+        "nextButton": "button:has-text('Next')",
+        "textBox": "div[role='textbox']",
+        "postButton": "button.share-actions__primary-action",
+        "composeModal": "div[aria-labelledby='share-to-linkedin-modal__header']"
+      }
     }
   },
   "search": {
@@ -16,7 +31,8 @@
   },
   "prompt": {
     "style": "A fun, witty, satirical cartoon.",
-    "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a short, witty summary of the news) and 'imagePrompt' (a detailed visual description for an AI image generator based on the news)."
+    "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a short, witty summary of the news) and 'imagePrompt' (a detailed visual description for an AI image generator based on the news).",
+    "profilePath": "prompt_profiles\\witty_cartoon.json"
   },
   "imageGeneration": {
     "model": "gpt-image-1",
@@ -36,5 +52,9 @@
     "enabled": true,
     "preserveTemporaryFiles": true
   },
-  "timezone": "America/New_York"
+  "timezone": "America/New_York",
+  "postProcessing": {
+    "actionAfterSuccess": "delete",
+    "backupFolderPath": "./post_backups"
+  }
 }

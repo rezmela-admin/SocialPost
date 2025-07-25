@@ -112,28 +112,83 @@ async function promptForSpeechBubble(initialPrompt, dialogue, isVirtualInfluence
             type: 'confirm',
             name: 'addSpeechBubble',
             message: isVirtualInfluencer ? 'Add a speech bubble to the image?' : 'Do you want to add a speech bubble to the cartoon?',
-            default: isVirtualInfluencer, // Default true for influencer, false for standard
+            default: isVirtualInfluencer,
         },
     ]);
 
-    if (addSpeechBubble) {
-        const { speechBubbleText } = await inquirer.prompt([
-            {
-                type: 'input',
-                name: 'speechBubbleText',
-                message: 'Enter the text for the speech bubble:',
-                default: dialogue, // Pre-fill with Gemini's suggestion if available
-                validate: (input) => input.trim() !== '' || 'Speech bubble text cannot be empty.',
-            },
-        ]);
+    if (!addSpeechBubble) {
+        return initialPrompt;
+    }
 
-        if (isVirtualInfluencer) {
-            return `${initialPrompt} The character has a speech bubble that clearly says: "${speechBubbleText}".${SPEECH_BUBBLE_INSTRUCTION}`;
+    let speechBubbleText = '';
+    let needsEditing = true;
+
+    // Initial prompt for the text
+    const { initialText } = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'initialText',
+            message: 'Enter the text for the speech bubble:',
+            default: dialogue,
+            validate: (input) => input.trim() !== '' || 'Speech bubble text cannot be empty.',
+        },
+    ]);
+    speechBubbleText = initialText;
+
+    while (needsEditing) {
+        const wordCount = speechBubbleText.split(/\s+/).length;
+        const charCount = speechBubbleText.length;
+
+        if (wordCount > 15 || charCount > 80) {
+            console.log("\n[WARN] The speech bubble text is quite long and may not fit well in the image.");
+            const { action } = await inquirer.prompt([
+                {
+                    type: 'list',
+                    name: 'action',
+                    message: 'What would you like to do?',
+                    choices: [
+                        { name: 'Let the AI try to shorten it.', value: 'ai' },
+                        { name: 'Let me edit it myself.', value: 'user' },
+                        { name: 'Use the long text anyway.', value: 'force' },
+                    ],
+                },
+            ]);
+
+            if (action === 'force') {
+                needsEditing = false;
+            } else if (action === 'user') {
+                const { editedText } = await inquirer.prompt([
+                    {
+                        type: 'editor',
+                        name: 'editedText',
+                        message: 'Edit the text in the editor. Save and close to continue.',
+                        default: speechBubbleText,
+                    },
+                ]);
+                speechBubbleText = editedText.trim();
+            } else if (action === 'ai') {
+                console.log("[INFO] Asking the AI to shorten the text...");
+                const shortenPrompt = `Please shorten the following text to be concise and witty, suitable for a speech bubble in a cartoon (ideally under 15 words). Respond with ONLY the shortened text, without any extra formatting or quotation marks: "${speechBubbleText}"`;
+                
+                const result = await geminiRequestWithRetry(() => 
+                    geminiModel.generateContent(shortenPrompt)
+                );
+                const response = await result.response;
+                const shortenedText = response.text().trim().replace(/"/g, ''); // Remove quotes
+
+                console.log(`[INFO] AI Suggestion: "${shortenedText}"`);
+                speechBubbleText = shortenedText;
+            }
         } else {
-            return `${initialPrompt}, with a speech bubble that clearly says: "${speechBubbleText}".${SPEECH_BUBBLE_INSTRUCTION}`;
+            needsEditing = false;
         }
     }
-    return initialPrompt;
+
+    if (isVirtualInfluencer) {
+        return `${initialPrompt} The character has a speech bubble that clearly says: "${speechBubbleText}".`;
+    } else {
+        return `${initialPrompt}, with a speech bubble that clearly says: "${speechBubbleText}".`;
+    }
 }
 
 
@@ -172,7 +227,12 @@ function buildImageRequest(prompt, size, extraParams = {}) {
     const model = config.imageGeneration.model;
     
     // Add a safe zone instruction to the prompt to prevent cropping on social media feeds
-    const finalPrompt = `${prompt}, with a 5% margin of empty space around the entire image to act as a safe zone.`;
+    let finalPrompt = `${prompt}, with a 5% margin of empty space around the entire image to act as a safe zone.`;
+
+    // If a speech bubble is present, append the critical instruction at the very end
+    if (prompt.includes('speech bubble')) {
+        finalPrompt += SPEECH_BUBBLE_INSTRUCTION;
+    }
 
     const request = {
         model,
@@ -205,7 +265,7 @@ export async function postToX(page, summary, tempImagePath) {
     await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 60000 });
     
     console.log("[INFO] Uploading image to X...");
-    await page.setInputFiles('input[type="file"]', tempImagePath);
+    await page.setInputFiles('input[type="file"]', [tempImagePath]);
 
     console.log("[INFO] Waiting for image to be processed by X...");
     await page.waitForSelector('[data-testid="tweetPhoto"]', { state: 'visible', timeout: 60000 });
@@ -237,7 +297,7 @@ export async function postToLinkedIn(page, summary, tempImagePath) {
     const fileChooserPromise = page.waitForEvent('filechooser');
     await page.getByRole('button', { name: 'Add media' }).click();
     const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles(tempImagePath);
+    await fileChooser.setFiles([tempImagePath]);
     
     console.log("[INFO] Clicking 'Next' after image upload...");
     await page.getByRole('button', { name: 'Next' }).click();
@@ -269,8 +329,21 @@ async function runSinglePostCycle(page, post, platform, isImmediatePost = false)
     let success = false;
     const tempFiles = []; // Keep track of temp files for cleanup
     const topic = post.topic;
+    const originalPromptConfig = { ...config.prompt }; // Shallow copy is enough
 
     try {
+        // --- Profile Loading Logic for Scheduled Posts ---
+        if (post.profile) {
+            const profilePath = path.join(PROFILES_DIR, post.profile);
+            if (fs.existsSync(profilePath)) {
+                console.log(`[INFO] Loading temporary profile for this post: ${post.profile}`);
+                const profileData = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+                config.prompt = profileData; // Temporarily override the prompt config
+            } else {
+                console.warn(`[WARN] Profile "${post.profile}" not found. Using the default active profile.`);
+            }
+        }
+
         console.log(`\n[INFO] Processing topic: "${topic}" for ${platform}`);
 
         // --- Generate Content with Gemini API ---
@@ -309,7 +382,12 @@ async function runSinglePostCycle(page, post, platform, isImmediatePost = false)
             const jsonStart = geminiRawOutput.indexOf('{');
             const jsonEnd = geminiRawOutput.lastIndexOf('}');
             if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON object found in Gemini response.");
-            parsedResult = JSON.parse(geminiRawOutput.substring(jsonStart, jsonEnd + 1));
+            
+            // Sanitize the JSON string to remove trailing commas
+            let jsonString = geminiRawOutput.substring(jsonStart, jsonEnd + 1);
+            jsonString = jsonString.replace(/,\s*([}\]])/g, '$1'); // Remove trailing commas
+
+            parsedResult = JSON.parse(jsonString);
         } catch (error) {
             console.error("[ERROR] Failed to parse JSON from Gemini:", error);
             console.error("[ERROR] Raw Gemini Output:", geminiRawOutput);
@@ -356,51 +434,63 @@ async function runSinglePostCycle(page, post, platform, isImmediatePost = false)
             // VIRTUAL INFLUENCER MODE (Hybrid Node/Python Workflow)
             console.log("[INFO] Executing Hybrid Node/Python Influencer Workflow...");
 
-            const approvedBackgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt');
-            if (!approvedBackgroundPrompt) {
-                console.log('[INFO] Post cycle cancelled during background prompt approval.');
-                return success;
-            }
-            backgroundPrompt = approvedBackgroundPrompt;
+            if (isImmediatePost) {
+                const approvedBackgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt');
+                if (!approvedBackgroundPrompt) {
+                    console.log('[INFO] Post cycle cancelled during background prompt approval.');
+                    return success;
+                }
+                backgroundPrompt = approvedBackgroundPrompt;
 
-            let framingChoice = '';
-            const customOption = 'Custom...';
-            const backOption = 'Go Back to Main Menu';
-            const framingChoices = [...(config.framingOptions || []), new inquirer.Separator(), customOption, backOption];
+                let framingChoice = '';
+                const customOption = 'Custom...';
+                const backOption = 'Go Back to Main Menu';
+                const framingChoices = [...(config.framingOptions || []), new inquirer.Separator(), customOption, backOption];
 
-            const { selectedFraming } = await inquirer.prompt([
-                {
-                    type: 'list',
-                    name: 'selectedFraming',
-                    message: 'Choose the framing for the virtual influencer:',
-                    choices: framingChoices,
-                },
-            ]);
-
-            if (selectedFraming === backOption) return 'back';
-
-            if (selectedFraming === customOption) {
-                const { customFraming } = await inquirer.prompt([
+                const { selectedFraming } = await inquirer.prompt([
                     {
-                        type: 'editor',
-                        name: 'customFraming',
-                        message: 'Enter the custom framing instructions. Save and close to continue.',
-                        validate: input => !!input || 'Framing instructions cannot be empty.',
+                        type: 'list',
+                        name: 'selectedFraming',
+                        message: 'Choose the framing for the virtual influencer:',
+                        choices: framingChoices,
                     },
                 ]);
-                framingChoice = customFraming;
-            } else {
-                framingChoice = selectedFraming;
-            }
 
-            let sourcePrompt = `${config.prompt.style} ${characterDescription}. ${framingChoice} The character should be posed appropriately for a discussion about '${summary}'. The background should be a solid, neutral light grey.`;
+                if (selectedFraming === backOption) return 'back';
+
+                if (selectedFraming === customOption) {
+                    const { customFraming } = await inquirer.prompt([
+                        {
+                            type: 'editor',
+                            name: 'customFraming',
+                            message: 'Enter the custom framing instructions. Save and close to continue.',
+                            validate: input => !!input || 'Framing instructions cannot be empty.',
+                        },
+                    ]);
+                    framingChoice = customFraming;
+                } else {
+                    framingChoice = selectedFraming;
+                }
+                 let sourcePrompt = `${config.prompt.style} ${characterDescription}. ${framingChoice} The character should be posed appropriately for a discussion about '${summary}'. The background should be a solid, neutral light grey.`;
             
+				// Add character placement instruction if available
+				if (config.prompt.characterPlacement) {
+					sourcePrompt += ` ${config.prompt.characterPlacement}`;
+				}
+			} else {
+				// Non-interactive path for scheduled posts
+				let sourcePrompt = `${config.prompt.style} ${characterDescription}. The character should be posed appropriately for a discussion about '${summary}'. The background should be a solid, neutral light grey.`;
+				if (config.prompt.characterPlacement) {
+					sourcePrompt += ` ${config.prompt.characterPlacement}`;
+				}
+			}
+
             // --- Speech Bubble Logic ---
             if (isImmediatePost) {
                 sourcePrompt = await promptForSpeechBubble(sourcePrompt, dialogue, true);
             } else if (post.speechBubbleText) {
                 console.log("[INFO] Adding pre-configured speech bubble for scheduled post.");
-                sourcePrompt += ` The character has a speech bubble that clearly says: "${post.speechBubbleText}".${SPEECH_BUBBLE_INSTRUCTION}`;
+                sourcePrompt += ` The character has a speech bubble that clearly says: "${post.speechBubbleText}".`;
             }
 
             console.log("[INFO] Step 1 (Node.js): Generating source influencer image...");
@@ -438,16 +528,19 @@ async function runSinglePostCycle(page, post, platform, isImmediatePost = false)
                 finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue, false);
             } else if (post.speechBubbleText) {
                 console.log("[INFO] Adding pre-configured speech bubble for scheduled post.");
-                finalImagePrompt += `, with a speech bubble that clearly says: "${post.speechBubbleText}".${SPEECH_BUBBLE_INSTRUCTION}`;
+                finalImagePrompt += `, with a speech bubble that clearly says: "${post.speechBubbleText}".`;
             }
             
-            const approvedImagePrompt = await getApprovedInput(finalImagePrompt, 'image prompt');
-            if (!approvedImagePrompt) return success;
+            if (isImmediatePost) {
+                const approvedImagePrompt = await getApprovedInput(finalImagePrompt, 'image prompt');
+                if (!approvedImagePrompt) return success;
+                finalImagePrompt = approvedImagePrompt;
+            }
 
             console.log(`[INFO] Sending final prompt to the ${config.imageGeneration.model} API...`);
-            console.log(`[INFO] Final Prompt: "${approvedImagePrompt}"`);
+            console.log(`[INFO] Final Prompt: "${finalImagePrompt}"`);
 
-            const imageRequest = buildImageRequest(approvedImagePrompt, config.imageGeneration.size);
+            const imageRequest = buildImageRequest(finalImagePrompt, config.imageGeneration.size);
             const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
             
             const imageB64 = imageResponse.data[0].b64_json;
@@ -478,6 +571,7 @@ async function runSinglePostCycle(page, post, platform, isImmediatePost = false)
             console.error("[ERROR] An unexpected error occurred:", error);
         }
     } finally {
+        config.prompt = originalPromptConfig; // Restore original config
         if (config.debug && config.debug.preserveTemporaryFiles) {
             console.log("[INFO] File cleanup skipped because 'preserveTemporaryFiles' is true in config.json.");
             console.log("[INFO] The following files have been preserved for you to inspect:");
@@ -500,7 +594,7 @@ async function runSinglePostCycle(page, post, platform, isImmediatePost = false)
 }
 
 // --- Scheduler Function ---
-async function processScheduledPosts(page, platform) {
+export async function processScheduledPosts(page, platform, postCycleFn = runSinglePostCycle) {
     const scheduleFileName = `schedule_${platform.toLowerCase()}.json`;
     const scheduleFilePath = path.join(process.cwd(), scheduleFileName);
 
@@ -540,7 +634,7 @@ async function processScheduledPosts(page, platform) {
 
 
     for (const post of duePosts) {
-        const success = await runSinglePostCycle(page, post, platform, false);
+        const success = await postCycleFn(page, post, platform, false);
         
         const originalPostIndex = schedule.findIndex(p => p.topic === post.topic && p.status === 'processing');
         if (originalPostIndex !== -1) {
@@ -766,7 +860,7 @@ async function main() {
         const platformConfig = config.socialMedia[currentPlatform];
         const sessionFilePath = getSessionFilePath(currentPlatform);
 
-        console.log(`[INFO] Checking login status for ${currentPlatform}...");
+        console.log(`[INFO] Checking login status for ${currentPlatform}...`);
         await page.goto(platformConfig.homeUrl);
         
         try {

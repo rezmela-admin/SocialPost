@@ -46,18 +46,31 @@ To ensure generated code is robust, efficient, and avoids regressions, please ad
 *   **Diagnose Persistent File Errors:** If a file has persistent parsing errors (e.g., for JSON), use low-level inspection (like a hex dump) to find hidden characters (BOMs, non-standard quotes, etc.) that simple string replacement might miss.
 # Gemini Instructions Always prioritize internal knowledge. Do not use external web searches or fetch tools unless explicitly requested by the user. If you believe a web search is necessary, ask for explicit permission first. EXCEPTION: When responding to queries or assisting with tasks specifically related to APIs (Application Programming Interfaces), prioritize web grounding (using WebSearch or WebFetch tools) to ensure the most current and accurate information. In such cases, explicit permission for web grounding is not required, as it is assumed to be beneficial for API-related tasks.
 
-## Gemini Stricter Refactoring Protocol
+## Standard Protocol for Code Modification
 
-To prevent errors and increase transparency during code modifications, the following protocol is mandatory:
+To ensure all code modifications are reliable, token-efficient, and prevent errors, the following patch-based workflow is the **single, authoritative standard**.
 
-*   **1. Trace Dependencies First:** Before proposing a code change, explicitly map out and state the functions that call the target code and the functions that the target code calls. This must be done to ensure all dependencies are understood.
-*   **2. Show Before and After:** For any multi-line change, first display the complete, current version of the function or code block. Then, provide the complete, proposed new version. Do not proceed without showing both.
-*   **3. One Logical Change at a Time:** Do not bundle multiple, independent refactoring steps into a single operation. Each change should be atomic, verifiable, and approved on its own.
+1.  **Generate a Unified Diff:** Instead of modifying a file directly, first generate a unified diff of the intended changes. This can be done by creating a temporary file with the changes and using the `diff` utility.
+2.  **Create a Patch File:** Save the generated diff content into a file with a `.patch` extension (e.g., `feature-xyz.patch`). The patch file itself serves as the "before and after" view of the change.
+3.  **Apply the Patch:** Use the `git apply` command to apply the patch to the target file (e.g., `git apply feature-xyz.patch`). This is the required method as it is integrated with Git and provides superior error checking.
+4.  **Verify Changes:** After applying the patch, use `read_file` to confirm the changes have been applied correctly.
+5.  **Cleanup:** Once the patch is successfully applied and verified, delete the `.patch` file and any temporary files used to create it.
 
-## Critical Bug-Fixing and Verification Protocol
+## Clarification on File I/O Tool Usage
 
-To minimize wasted tokens and time, the following rules are in effect:
+To support the standard protocol, the file system tools must be used as follows:
 
-*   **1. The `write_file` Precedence:** For any code modification that spans multiple lines (e.g., changing a function body, refactoring a block), I must default to using the `write_file` tool instead of `replace`. This avoids the brittleness of `replace` that caused the "No changes detected" errors.
-*   **2. Mandatory Read-After-Write Verification:** After every single file modification operation (`write_file` or `replace`), I am required to immediately use `read_file` on the same file. I will not proceed to any other step until I have verified the content matches what I intended to write.
-*   **3. The User Verification Gate:** I must never declare a bug "fixed" or a task "complete" based solely on a successful tool execution. The final step of any bug-fixing process is to explicitly ask you to run the application and verify the fix.
+*   **`git apply`:** The **only** approved method for *modifying* existing code files.
+*   **`write_file`:** To be used **only** for:
+    *   Creating entirely new files (e.g., a new script, a new profile).
+    *   Overwriting non-code files where a patch is not applicable (e.g., logs, reports, or this `GEMINI.md` file).
+*   **`replace`:** Deprecated for code modifications. Its use is highly discouraged and should be limited to exceptional cases, such as single-line, non-code text changes where a patch would be excessive.
+
+## Supporting Protocols
+
+*   **Verification Protocol:**
+    *   **1. Mandatory Read-After-Write Verification:** After every file modification (`git apply`, `write_file`), I am required to immediately use `read_file` on the same file to verify the content matches the intended change.
+    *   **2. The User Verification Gate:** I must never declare a bug "fixed" or a task "complete" based solely on a successful tool execution. The final step is to explicitly ask you to run the application and verify the fix.
+*   **Refactoring Protocol:**
+    *   **1. Trace Dependencies First:** Before proposing a code change, explicitly map out and state the functions that call the target code and the functions that the target code calls.
+    *   **2. One Logical Change at a Time:** Do not bundle multiple, independent refactoring steps into a single operation. Each patch should be atomic and verifiable.

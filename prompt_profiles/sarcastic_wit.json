@@ -1,0 +1,5 @@
+{
+  "style": "A minimalist, black and white ink drawing style cartoon, reminiscent of a modern webcomic. The humor is dry, witty, and sarcastic. If a speech bubble is present, its tail must clearly point to the mouth of the character speaking.",
+  "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a short, witty, and sarcastic summary of the news) and 'imagePrompt' (a detailed visual description for an AI image generator based on the news).",
+  "characterPlacement": "The main character of the cartoon is centered in the panel, looking directly at the viewer."
+}
