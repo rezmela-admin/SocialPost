@@ -45,26 +45,33 @@ function debugLog(message) {
 }
 
 async function getApprovedInput(text, inputType) {
-    // This function remains for interactive content approval
-    const tempFile = `${inputType}_for_editing.txt`;
     while (true) {
         const { action } = await inquirer.prompt([
             { type: 'list', name: 'action', message: `Generated ${inputType}:\n\n"${text}"\n\nApprove or edit?`, choices: ['Approve', 'Edit', 'Cancel'] }
         ]);
+
         if (action === 'Approve') return text;
         if (action === 'Cancel') return null;
         if (action === 'Edit') {
             try {
-                fs.writeFileSync(tempFile, text);
-                execSync(process.platform === 'win32' ? `start ${tempFile}` : `open ${tempFile}`);
-                await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter after editing...' }]);
-                const editedText = fs.readFileSync(tempFile, 'utf8').trim();
-                fs.unlinkSync(tempFile);
-                if (editedText) return editedText;
+                const { editedText } = await inquirer.prompt([
+                    {
+                        type: 'editor',
+                        name: 'editedText',
+                        message: `Editing ${inputType}. Save and close your editor to continue.`,
+                        default: text,
+                        waitForUserInput: true,
+                    }
+                ]);
+                
+                if (editedText.trim()) {
+                    return editedText.trim();
+                }
+                
                 console.warn(`[APP-WARN] Edited ${inputType} is empty. Please try again.`);
+
             } catch (error) {
-                console.error(`[APP-ERROR] Failed to handle temp file:`, error);
-                if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+                console.error(`[APP-ERROR] Failed to open or handle the editor:`, error);
             }
         }
     }
@@ -540,25 +547,30 @@ async function main() {
 
         switch (action) {
             case 'Generate and Queue a New Post':
-                const { topic } = await inquirer.prompt([{ type: 'editor', name: 'topic', message: 'Enter the topic:', default: config.search.defaultTopic }]);
-                const { platforms } = await inquirer.prompt([{ type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'] }]);
-                
-                if (!topic || platforms.length === 0) {
-                    console.log('[APP-INFO] Post generation cancelled.');
-                    break;
-                }
-
-                const { confirm } = await inquirer.prompt([
+                const answers = await inquirer.prompt([
+                    { 
+                        type: 'editor', 
+                        name: 'topic', 
+                        message: 'Enter the topic:', 
+                        default: config.search.defaultTopic 
+                    },
+                    { 
+                        type: 'checkbox', 
+                        name: 'platforms', 
+                        message: 'Queue for which platforms?', 
+                        choices: ['X', 'LinkedIn'] 
+                    },
                     { 
                         type: 'confirm', 
                         name: 'confirm', 
-                        message: `Generate post about "${topic}" for ${platforms.join(', ')}?`, 
-                        default: true 
+                        message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, 
+                        default: true,
+                        when: (answers) => answers.topic && answers.platforms.length > 0
                     }
                 ]);
 
-                if (confirm) {
-                    await generateAndQueuePost({ topic, platforms });
+                if (answers.confirm) {
+                    await generateAndQueuePost({ topic: answers.topic, platforms: answers.platforms });
                 } else {
                     console.log('[APP-INFO] Post generation cancelled.');
                 }
