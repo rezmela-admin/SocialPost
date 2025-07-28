@@ -123,7 +123,7 @@ function buildImageRequest(prompt, size, extraParams = {}) {
 }
 
 // --- Core Content Generation Function ---
-async function generateAndQueuePost(postDetails) {
+async function generateAndQueuePost(postDetails, skipSummarization = false) {
     const originalPromptConfig = { ...config.prompt };
     if (!process.env.OPENAI_API_KEY) {
         console.error("[APP-FATAL] OpenAI API key is not configured. Please check your .env file.");
@@ -134,62 +134,75 @@ async function generateAndQueuePost(postDetails) {
         console.log(`\n[APP-INFO] Generating content for topic: "${postDetails.topic}"`);
         
         const safetySettings = [ { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }];
-        const isVirtualInfluencer = !!config.prompt.characterDescription;
-        let taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
-        
-        // --- [FIX-2] Correctly modify the prompt for dialogue using simple string replacement ---
-        if (!isVirtualInfluencer) {
-            taskPrompt = taskPrompt.replace('exactly two string keys', 'exactly three string keys');
-            // This is a more robust way to add the dialogue requirement without regex.
-            const closingParenIndex = taskPrompt.lastIndexOf(')');
-            if (closingParenIndex !== -1) {
-                taskPrompt = taskPrompt.slice(0, closingParenIndex) + 
-                             "), and 'dialogue' (a short, witty line of text, under 15 words, for a speech bubble)" + 
-                             taskPrompt.slice(closingParenIndex + 1);
-            }
-        }
-        
+        const activeProfileName = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : null;
+
+        let summary;
+        let finalImagePrompt;
+
+        // --- AI Content Generation ---
+        const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
         const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: taskPrompt }] }], safetySettings }));
         const geminiRawOutput = (await geminiResult.response).text();
         const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
         const parsedResult = JSON.parse(jsonString);
 
-        let { summary, imagePrompt, backgroundPrompt, dialogue } = parsedResult;
-        
-        if (!postDetails.isBatch) {
-            summary = await getApprovedInput(summary, 'summary');
-            if (!summary) {
+        // --- Summary Handling ---
+        summary = parsedResult.summary || postDetails.topic;
+        if (!postDetails.isBatch && !skipSummarization) {
+            const approvedSummary = await getApprovedInput(summary, 'summary');
+            if (!approvedSummary) {
                 console.log('[APP-INFO] Job creation cancelled.');
                 return { success: false, wasCancelled: true };
+            }
+            summary = approvedSummary;
+        }
+
+        // --- Image Prompt Construction ---
+        if (activeProfileName === 'multi_character_scene.json') {
+            // New multi-character logic
+            const { sceneDescription, characters } = parsedResult;
+            let characterPrompts = characters.map(c => `${c.description} has a speech bubble saying, "${c.dialogue}".`).join(' ');
+            finalImagePrompt = `${config.prompt.style} ${sceneDescription}. ${characterPrompts}`;
+        
+        } else {
+            // Original single-character / virtual influencer logic
+            const { imagePrompt, dialogue } = parsedResult;
+            const isVirtualInfluencer = !!config.prompt.characterDescription;
+            finalImagePrompt = isVirtualInfluencer 
+                ? `${config.prompt.style} ${config.prompt.characterDescription}` 
+                : `${config.prompt.style} ${imagePrompt}`;
+
+            if (!postDetails.isBatch) {
+                finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', isVirtualInfluencer);
+            } else if (dialogue && dialogue.trim() !== '') {
+                console.log(`[APP-INFO] Auto-adding speech bubble with dialogue: "${dialogue}"`);
+                finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}"`;
             }
         }
 
-        const uniqueImageName = `post-image-${Date.now()}.png`;
-        const imagePath = path.join(process.cwd(), uniqueImageName);
-        let finalImagePrompt = isVirtualInfluencer ? `${config.prompt.style} ${config.prompt.characterDescription}` : `${config.prompt.style} ${imagePrompt}`;
-        
-        // Handle speech bubble: interactive for single posts, automatic for batch
+        // --- Final Approval and Image Generation ---
         if (!postDetails.isBatch) {
-            finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', isVirtualInfluencer);
-            finalImagePrompt = await getApprovedInput(finalImagePrompt, 'image prompt');
-            if (!finalImagePrompt) {
+            const approvedPrompt = await getApprovedInput(finalImagePrompt, 'image prompt');
+            if (!approvedPrompt) {
                 console.log('[APP-INFO] Job creation cancelled.');
                 return { success: false, wasCancelled: true };
             }
-        } else if (dialogue && dialogue.trim() !== '') {
-            // In batch mode, automatically add the speech bubble if dialogue was generated
-            console.log(`[APP-INFO] Auto-adding speech bubble with dialogue: "${dialogue}"`);
-            finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}"`;
+            finalImagePrompt = approvedPrompt;
         }
 
         console.log(`[APP-INFO] Sending final prompt to image generator... This may take a moment.`);
         debugLog(`Final Image Prompt: ${finalImagePrompt}`);
+        
+        const uniqueImageName = `post-image-${Date.now()}.png`;
+        const imagePath = path.join(process.cwd(), uniqueImageName);
         const imageRequest = buildImageRequest(finalImagePrompt, config.imageGeneration.size);
         const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
+        
         console.log(`[APP-DEBUG] Received response from image generator.`);
         fs.writeFileSync(imagePath, Buffer.from(imageResponse.data[0].b64_json, 'base64'));
         console.log(`[APP-SUCCESS] Image created and saved to: ${imagePath}`);
 
+        // --- Job Queueing ---
         const newJob = {
             id: uuidv4(),
             status: 'pending',
@@ -198,7 +211,7 @@ async function generateAndQueuePost(postDetails) {
             summary: summary,
             imagePath: imagePath,
             platforms: postDetails.platforms,
-            profile: path.basename(config.prompt.profilePath || 'default'),
+            profile: activeProfileName || 'default',
         };
 
         const queue = JSON.parse(fs.readFileSync(QUEUE_FILE_PATH, 'utf8'));
@@ -420,6 +433,73 @@ async function runAIBatchGeneration() {
     console.log("\n[APP-SUCCESS] AI batch generation complete.");
 }
 
+// --- [NEW] Create Post from Local Media ---
+async function createPostFromLocalMedia() {
+    console.log("\n--- Create New Post from Local Media File ---");
+
+    const answers = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'imagePath',
+            message: 'Enter the full, absolute path to your local image or video file:',
+            validate: (input) => {
+                if (!path.isAbsolute(input)) {
+                    return 'Please provide an absolute path.';
+                }
+                if (!fs.existsSync(input)) {
+                    return 'File not found at the specified path. Please check the path and try again.';
+                }
+                return true;
+            }
+        },
+        {
+            type: 'editor',
+            name: 'summary',
+            message: 'Enter the post summary/text:',
+            validate: (input) => input.trim().length > 0 || 'Summary cannot be empty.'
+        },
+        {
+            type: 'checkbox',
+            name: 'platforms',
+            message: 'Queue for which platforms?',
+            choices: ['X', 'LinkedIn'],
+            validate: (input) => input.length > 0 || 'Please select at least one platform.'
+        },
+        {
+            type: 'confirm',
+            name: 'confirm',
+            message: (answers) => `Queue post with media "${path.basename(answers.imagePath)}" for ${answers.platforms.join(', ')}?`,
+            default: true,
+        }
+    ]);
+
+    if (!answers.confirm) {
+        console.log('[APP-INFO] Post creation cancelled.');
+        return;
+    }
+
+    try {
+        const newJob = {
+            id: uuidv4(),
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+            topic: 'Post from local media', // Use a generic topic
+            summary: answers.summary,
+            imagePath: answers.imagePath, // The user-provided absolute path
+            platforms: answers.platforms,
+            profile: 'local_media', // A special profile name for these types of posts
+        };
+
+        const queue = JSON.parse(fs.readFileSync(QUEUE_FILE_PATH, 'utf8'));
+        queue.push(newJob);
+        fs.writeFileSync(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
+        console.log(`[APP-SUCCESS] New job ${newJob.id} added to the queue for platforms: ${answers.platforms.join(', ')}.`);
+
+    } catch (error) {
+        console.error("[APP-FATAL] An error occurred while queueing the local media post:", error);
+    }
+}
+
 
 // --- Initial Login Setup ---
 
@@ -466,14 +546,19 @@ async function initialLogin() {
 async function runWorker() {
     console.log('\n[APP-INFO] Starting the worker process...');
     return new Promise((resolve, reject) => {
-        // Spawn the worker.js script as a new Node.js process
-        // 'inherit' pipes the child's stdio to the parent, so we see its output
         const workerProcess = spawn('node', ['worker.js'], { stdio: 'inherit' });
 
-        workerProcess.on('close', (code) => {
+        workerProcess.on('close', async (code) => {
             console.log(`\n[APP-INFO] Worker process finished with exit code ${code}.`);
-            // A short delay to allow the user to read the final output
-            setTimeout(() => resolve(), 2000); 
+            // This prompt ensures that we wait for user input before proceeding,
+            // which prevents the main menu from appearing prematurely and causing
+            // the "double enter" issue.
+            await inquirer.prompt([{
+                type: 'input',
+                name: 'continue',
+                message: 'Press Enter to return to the main menu...',
+            }]);
+            resolve();
         });
 
         workerProcess.on('error', (err) => {
@@ -524,6 +609,7 @@ async function main() {
 
         const choices = [
             'Generate and Queue a New Post',
+            'Create Post from Local Media',
             'Generate Batch of Posts with AI',
         ];
 
@@ -554,6 +640,13 @@ async function main() {
                         message: 'Enter the topic:', 
                         default: config.search.defaultTopic 
                     },
+                    {
+                        type: 'confirm',
+                        name: 'skipSummarization',
+                        message: 'Use this topic directly as the post summary (skips AI summary generation)?',
+                        default: false,
+                        when: (answers) => answers.topic.trim().length > 0
+                    },
                     { 
                         type: 'checkbox', 
                         name: 'platforms', 
@@ -570,10 +663,16 @@ async function main() {
                 ]);
 
                 if (answers.confirm) {
-                    await generateAndQueuePost({ topic: answers.topic, platforms: answers.platforms });
+                    await generateAndQueuePost(
+                        { topic: answers.topic, platforms: answers.platforms },
+                        answers.skipSummarization 
+                    );
                 } else {
                     console.log('[APP-INFO] Post generation cancelled.');
                 }
+                break;
+            case 'Create Post from Local Media':
+                await createPostFromLocalMedia();
                 break;
             case 'Generate Batch of Posts with AI':
                 await runAIBatchGeneration();
