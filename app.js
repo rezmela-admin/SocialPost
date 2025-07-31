@@ -15,6 +15,7 @@ import 'dotenv/config';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import sharp from 'sharp';
 
 const PROFILES_DIR = './prompt_profiles';
 const QUEUE_FILE_PATH = path.join(process.cwd(), 'post_queue.json');
@@ -105,7 +106,10 @@ async function apiRequestWithRetry(apiCall, shouldRetry, maxRetries, delay, apiN
     }
     throw new Error(`[APP-FATAL] ${apiName} API call failed after ${maxRetries} retries.`);
 }
-async function openaiRequestWithRetry(apiCall) { return apiRequestWithRetry(apiCall, (e) => e instanceof OpenAI.APIError, 3, 5000, 'OpenAI'); }
+async function openaiRequestWithRetry(apiCall) { 
+    const shouldRetry = (error) => error instanceof OpenAI.APIError && error.message.includes('Connection error');
+    return apiRequestWithRetry(apiCall, shouldRetry, 3, 5000, 'OpenAI'); 
+}
 async function geminiRequestWithRetry(apiCall) { return apiRequestWithRetry(apiCall, (e) => e instanceof GoogleGenerativeAIFetchError, 4, 10000, 'Gemini'); }
 
 // --- Image Request Builder ---
@@ -121,6 +125,184 @@ function buildImageRequest(prompt, size, extraParams = {}) {
     debugLog(`OpenAI API Request: ${JSON.stringify(request, null, 2)}`);
     return request;
 }
+
+// --- [RESTORATION] Two-Phase Virtual Influencer Post Generation ---
+async function generateVirtualInfluencerPost(postDetails, skipSummarization = false) {
+    const originalPromptConfig = { ...config.prompt };
+    if (!process.env.OPENAI_API_KEY) {
+        console.error("[APP-FATAL] OpenAI API key is not configured. Please check your .env file.");
+        return { success: false };
+    }
+
+    try {
+        console.log(`\n[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "${postDetails.topic}"`);
+        const safetySettings = [ { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }];
+        const activeProfileName = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : 'virtual_influencer';
+
+        // 1. Get Prompts from AI
+        let summary, dialogue, backgroundPrompt;
+        let parsedResult = {};
+
+        if (!skipSummarization) {
+            const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
+            const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: taskPrompt }] }], safetySettings }));
+            const geminiRawOutput = (await geminiResult.response).text();
+            try {
+                const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+                parsedResult = JSON.parse(jsonString);
+                ({ summary, dialogue, backgroundPrompt } = parsedResult);
+            } catch (e) {
+                console.error("[APP-ERROR] Failed to parse JSON from Gemini response. Raw output:", geminiRawOutput);
+                return { success: false };
+            }
+        } else {
+            summary = postDetails.topic;
+            // In skip mode, we still need dialogue and background
+            const { approvedDialogue } = await inquirer.prompt([{ type: 'editor', name: 'approvedDialogue', message: 'Enter the dialogue for the speech bubble:' }]);
+            const { approvedBackground } = await inquirer.prompt([{ type: 'editor', name: 'approvedBackground', message: 'Enter the prompt for the background image:' }]);
+            dialogue = approvedDialogue;
+            backgroundPrompt = approvedBackground;
+        }
+
+        // 2. User Approval
+        const approvedSummary = await getApprovedInput(summary, 'summary');
+        if (!approvedSummary) { console.log('[APP-INFO] Job creation cancelled.'); return { success: false, wasCancelled: true }; }
+        summary = approvedSummary;
+
+        const approvedDialogue = await getApprovedInput(dialogue, 'dialogue');
+        if (!approvedDialogue) { console.log('[APP-INFO] Job creation cancelled.'); return { success: false, wasCancelled: true }; }
+        dialogue = approvedDialogue;
+        
+        const approvedBackgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt');
+        if (!approvedBackgroundPrompt) { console.log('[APP-INFO] Job creation cancelled.'); return { success: false, wasCancelled: true }; }
+        backgroundPrompt = approvedBackgroundPrompt;
+
+        // --- [NEW] Framing Selection ---
+        let framingChoice = '';
+        const customOption = 'Custom...';
+        const backOption = 'Back to Main Menu';
+        const framingChoices = [...(config.framingOptions || []), new inquirer.Separator(), customOption, backOption];
+
+        const { selectedFraming } = await inquirer.prompt([
+            {
+                type: 'list',
+                name: 'selectedFraming',
+                message: 'Choose the framing for the virtual influencer:',
+                choices: framingChoices,
+            },
+        ]);
+
+        if (selectedFraming === backOption) {
+            console.log('[APP-INFO] Returning to main menu.');
+            return { success: false, wasCancelled: true };
+        } else if (selectedFraming === customOption) {
+            const { customFraming } = await inquirer.prompt([
+                {
+                    type: 'editor',
+                    name: 'customFraming',
+                    message: 'Enter custom framing instructions. Save and close to continue.',
+                    validate: input => !!input || 'Framing instructions cannot be empty.',
+                },
+            ]);
+            framingChoice = customFraming;
+        } else {
+            framingChoice = selectedFraming;
+        }
+
+        // 3. Phase 1: Generate Character with Transparency
+        console.log('[APP-INFO] Phase 1: Generating character on a neutral background for inpainting...');
+        const characterPrompt = `${config.prompt.style} ${config.prompt.characterDescription.replace(/{TOPIC}/g, postDetails.topic)}. ${framingChoice} ...with a speech bubble. It is critical that the text inside the speech bubble is rendered perfectly without any spelling errors and says exactly: "${dialogue}". The background should be a solid, neutral light grey.`;
+        const tempCharacterImageName = `temp_character_${Date.now()}.png`;
+        const tempCharacterPath = path.join(process.cwd(), tempCharacterImageName);
+
+        const charImageRequest = buildImageRequest(characterPrompt, config.imageGeneration.size);
+        const charImageResponse = await openaiRequestWithRetry(() => openai.images.generate(charImageRequest));
+        fs.writeFileSync(tempCharacterPath, Buffer.from(charImageResponse.data[0].b64_json, 'base64'));
+        console.log(`[APP-SUCCESS] Phase 1 complete. Character on neutral background saved to: ${tempCharacterPath}`);
+
+        // 4. Phase 2: Inpaint Background using Python Script
+        console.log('[APP-INFO] Phase 2: Calling Python script to inpaint the background...');
+        const finalImageName = `post-image-${Date.now()}.png`;
+        const finalImagePath = path.join(process.cwd(), finalImageName);
+        const editPrompt = `Take the person from the foreground of the provided image and place them seamlessly into a new background. The person, their clothing, and their speech bubble must not be changed. The new background is: ${backgroundPrompt}`;
+
+        try {
+            execSync(`python edit_image.py "${tempCharacterPath}" "${finalImagePath}" "${editPrompt}"`, { stdio: 'inherit' });
+            console.log(`[APP-SUCCESS] Phase 2 complete. Final image saved to: ${finalImagePath}`);
+        } catch (error) {
+            console.error("[APP-FATAL] The Python inpainting script failed.", error);
+            // fs.unlinkSync(tempCharacterPath); // Clean up temp file on failure
+            return { success: false };
+        }
+
+        // 5. Cleanup
+        fs.unlinkSync(tempCharacterPath);
+        console.log(`[APP-INFO] Cleaned up temporary character file.`);
+
+        // 6. Job Queueing
+        const newJob = {
+            id: uuidv4(),
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+            topic: postDetails.topic,
+            summary: summary,
+            imagePath: finalImagePath,
+            platforms: postDetails.platforms,
+            profile: activeProfileName,
+        };
+
+        const queue = JSON.parse(fs.readFileSync(QUEUE_FILE_PATH, 'utf8'));
+        queue.push(newJob);
+        fs.writeFileSync(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
+        console.log(`[APP-SUCCESS] New Virtual Influencer job ${newJob.id} added to the queue.`);
+        return { success: true };
+
+    } catch (error) {
+        console.error("[APP-FATAL] An error occurred during Virtual Influencer content generation:", error);
+        return { success: false };
+    } finally {
+        config.prompt = originalPromptConfig;
+    }
+}
+
+
+// --- [NEW] Resilient Image Generation with Retries ---
+async function generateImageWithRetry(initialPrompt, size, maxRetries = 3) {
+    let lastError = null;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            let currentPrompt = initialPrompt;
+            if (i > 0) {
+                console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating prompt after safety rejection...`);
+                const regenPrompt = `The previous cartoon prompt was rejected by the image generation safety system. Please generate a new, alternative prompt for a political cartoon about the same topic that is less likely to be rejected. The original prompt was: "${initialPrompt}"`;
+                const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent(regenPrompt));
+                currentPrompt = (await geminiResult.response).text();
+                console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
+            }
+            
+            const imageRequest = buildImageRequest(currentPrompt, size);
+            const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
+            
+            // If successful, return the result
+            return imageResponse;
+
+        } catch (error) {
+            lastError = error;
+            // Specifically check for the safety system error
+            if (error.status === 400 && error.error?.message?.includes('safety system')) {
+                console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retrying
+            } else {
+                // For other errors, throw immediately
+                throw error;
+            }
+        }
+    }
+    // If all retries fail, throw the last error
+    console.error(`[APP-FATAL] Image generation failed after ${maxRetries} attempts.`);
+    throw lastError;
+}
+
 
 // --- Core Content Generation Function ---
 async function generateAndQueuePost(postDetails, skipSummarization = false) {
@@ -138,13 +320,24 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
 
         let summary;
         let finalImagePrompt;
+        let parsedResult = {};
 
-        // --- AI Content Generation ---
-        const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
-        const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: taskPrompt }] }], safetySettings }));
-        const geminiRawOutput = (await geminiResult.response).text();
-        const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
-        const parsedResult = JSON.parse(jsonString);
+        if (!skipSummarization) {
+            // --- AI Content Generation ---
+            const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
+            const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: taskPrompt }] }], safetySettings }));
+            if (geminiResult && geminiResult.response) {
+                const geminiRawOutput = (await geminiResult.response).text();
+                try {
+                    const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+                    parsedResult = JSON.parse(jsonString);
+                } catch (e) {
+                    console.error("[APP-ERROR] Failed to parse JSON from Gemini response. Raw output:", geminiRawOutput);
+                    // Provide a fallback structure to prevent downstream crashes
+                    parsedResult = { summary: 'Error: Could not parse AI response', imagePrompt: 'A confused robot looking at a computer screen with an error message.' };
+                }
+            }
+        }
 
         // --- Summary Handling ---
         summary = parsedResult.summary || postDetails.topic;
@@ -155,25 +348,52 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
                 return { success: false, wasCancelled: true };
             }
             summary = approvedSummary;
+            // If the user edits the summary, we need to re-parse it for the image prompt
+            parsedResult.summary = approvedSummary;
         }
 
         // --- Image Prompt Construction ---
-        if (activeProfileName === 'multi_character_scene.json') {
-            // New multi-character logic
-            const { sceneDescription, characters } = parsedResult;
-            let characterPrompts = characters.map(c => `${c.description} has a speech bubble saying, "${c.dialogue}".`).join(' ');
-            finalImagePrompt = `${config.prompt.style} ${sceneDescription}. ${characterPrompts}`;
-        
-        } else {
-            // Original single-character / virtual influencer logic
-            const { imagePrompt, dialogue } = parsedResult;
-            const isVirtualInfluencer = !!config.prompt.characterDescription;
-            finalImagePrompt = isVirtualInfluencer 
-                ? `${config.prompt.style} ${config.prompt.characterDescription}` 
-                : `${config.prompt.style} ${imagePrompt}`;
+        // [FIX] Determine the effective workflow. If the profile specifies a workflow, use it.
+        // Otherwise, default to 'standard'. This prevents the hardcoded 'multiCharacterScene'
+        // from causing issues when a simpler profile is active.
+        const effectiveWorkflow = config.prompt.workflow || 'standard';
 
-            if (!postDetails.isBatch) {
-                finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', isVirtualInfluencer);
+        if (effectiveWorkflow === 'multiCharacterScene') {
+            // New multi-character logic
+            const characterLibrary = JSON.parse(fs.readFileSync('./character_library.json', 'utf8'));
+            const characterKeys = Object.keys(characterLibrary).map(k => `"${k}"`).join(', ');
+            
+            // Inject character keys into the task prompt
+            config.prompt.task = config.prompt.task.replace('{CHARACTER_KEYS}', characterKeys);
+            
+            const { sceneDescription, characters } = parsedResult;
+
+            if (!sceneDescription || !Array.isArray(characters) || characters.length === 0) {
+                 console.warn('[APP-WARN] "multiCharacterScene" workflow was active, but the AI response was missing "sceneDescription" or "characters". Falling back to standard prompt generation.');
+                 const { imagePrompt, dialogue } = parsedResult;
+                 finalImagePrompt = `${config.prompt.style} ${imagePrompt || summary}`;
+                 if (dialogue) {
+                    finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}"`;
+                 }
+            } else {
+                let characterPrompts = characters.map(charAction => {
+                    const characterData = characterLibrary[charAction.character];
+                    if (!characterData) {
+                        console.warn(`[APP-WARN] AI returned character key "${charAction.character}" which was not found in the library. Skipping.`);
+                        return '';
+                    }
+                    return `${characterData.description} says, "${charAction.dialogue}".`;
+                }).filter(p => p).join(' ');
+
+                finalImagePrompt = `${config.prompt.style} ${sceneDescription}. ${characterPrompts}`;
+            }
+        } else {
+            // Original single-character / standard logic
+            const { imagePrompt, dialogue } = parsedResult;
+            finalImagePrompt = `${config.prompt.style} ${imagePrompt || summary}`; // Fallback to summary for image prompt
+
+            if (!postDetails.isBatch && dialogue) {
+                finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', false);
             } else if (dialogue && dialogue.trim() !== '') {
                 console.log(`[APP-INFO] Auto-adding speech bubble with dialogue: "${dialogue}"`);
                 finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}"`;
@@ -195,8 +415,9 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
         
         const uniqueImageName = `post-image-${Date.now()}.png`;
         const imagePath = path.join(process.cwd(), uniqueImageName);
-        const imageRequest = buildImageRequest(finalImagePrompt, config.imageGeneration.size);
-        const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
+        
+        // Use the new resilient function
+        const imageResponse = await generateImageWithRetry(finalImagePrompt, config.imageGeneration.size);
         
         console.log(`[APP-DEBUG] Received response from image generator.`);
         fs.writeFileSync(imagePath, Buffer.from(imageResponse.data[0].b64_json, 'base64'));
@@ -228,7 +449,190 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
     }
 }
 
+// --- [NEW] Comic Strip Generation Function ---
+async function generateAndQueueComicStrip(postDetails) {
+    // [FIX] To bypass any caching, read the profile directly from the path in the main config.
+    const activeProfilePath = config.prompt.profilePath;
+    if (!activeProfilePath || !fs.existsSync(activeProfilePath)) {
+        console.error("[APP-FATAL] The active profile path is not set or the file does not exist. Please load a profile.");
+        return { success: false };
+    }
+    const activeProfile = JSON.parse(fs.readFileSync(activeProfilePath, 'utf8'));
+
+    const originalPromptConfig = { ...config.prompt };
+    if (!process.env.OPENAI_API_KEY) {
+        console.error("[APP-FATAL] OpenAI API key is not configured. Please check your .env file.");
+        return { success: false };
+    }
+
+    try {
+        console.log(`\n[APP-INFO] Generating 4-panel comic strip for topic: "${postDetails.topic}"`);
+        
+        // [REFACTOR] Load the global character library as the single source of truth.
+        const characterLibrary = JSON.parse(fs.readFileSync('./character_library.json', 'utf8'));
+        const hasCharacterLibrary = !!(characterLibrary && Object.keys(characterLibrary).length > 0);
+
+        // 1. Get the story from Gemini
+        const safetySettings = [ { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }];
+        
+        let taskPrompt = activeProfile.task.replace('{TOPIC}', postDetails.topic);
+        if (hasCharacterLibrary) {
+            // [REFACTOR] Inject keys from the global library.
+            const characterKeys = Object.keys(characterLibrary).map(key => `"${key}"`).join(', ');
+            taskPrompt = taskPrompt.replace('{CHARACTER_KEYS}', characterKeys);
+        }
+
+
+        let parsedResult;
+        let validationError = '';
+        let attempts = 0;
+
+        while (attempts < 3) {
+            attempts++;
+            console.log(`[APP-INFO] Attempt ${attempts} to generate valid comic panels...`);
+
+            const fullPrompt = validationError ? `${taskPrompt}\n\n${validationError}` : taskPrompt;
+            debugLog(`Gemini Comic Strip Prompt (Attempt ${attempts}):\n${fullPrompt}`);
+            
+            try {
+                const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: fullPrompt }] }], safetySettings }));
+                const geminiRawOutput = (await geminiResult.response).text();
+                const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+                
+                parsedResult = JSON.parse(jsonString);
+                
+                // [REFACTOR] Validate against the global library.
+                const invalidPanels = parsedResult.panels.filter(panel => !characterLibrary[panel.character]);
+
+                if (invalidPanels.length === 0) {
+                    console.log('[APP-SUCCESS] Successfully generated valid comic panels.');
+                    validationError = '';
+                    break; 
+                } else {
+                    const invalidKeys = invalidPanels.map(p => p.character).join(', ');
+                    validationError = `You previously used invalid character keys: ${invalidKeys}. Please select characters ONLY from the provided library.`;
+                    console.warn(`[APP-WARN] AI returned invalid character keys: ${invalidKeys}. Retrying...`);
+                }
+            } catch (e) {
+                validationError = `You previously returned invalid JSON. Please ensure your output is a single, valid JSON object.`;
+                console.warn(`[APP-WARN] AI returned invalid JSON. Retrying...`);
+            }
+        }
+
+        if (validationError) {
+            console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI after ${attempts} attempts. Aborting.`);
+            return { success: false };
+        }
+
+
+        let { summary, panels } = parsedResult;
+
+        // 2. Get user approval for the summary
+        const approvedSummary = await getApprovedInput(summary, 'comic strip summary');
+        if (!approvedSummary) {
+            console.log('[APP-INFO] Job creation cancelled.');
+            return { success: false, wasCancelled: true };
+        }
+        summary = approvedSummary;
+
+        // 3. Generate each panel image
+        const panelImagePaths = [];
+        for (let i = 0; i < panels.length; i++) {
+            console.log(`[APP-INFO] Generating panel ${i + 1} of 4...`);
+            const panel = panels[i];
+            let panelPrompt;
+
+            if (hasCharacterLibrary) {
+                const characterKey = panel.character;
+                // [REFACTOR] Validate against the global library.
+                const characterDescription = characterLibrary[characterKey];
+                if (!characterDescription) {
+                    console.warn(`[APP-WARN] Character key "${characterKey}" from AI not found in the global character_library.json. Skipping panel.`);
+                    // Create a blank image as a placeholder to avoid crashing the composition
+                    const tempImagePath = path.join(process.cwd(), `temp_panel_${i}.png`);
+                    await sharp({ create: { width: 1024, height: 1024, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } }).toFile(tempImagePath);
+                    panelImagePaths.push(tempImagePath);
+                    continue;
+                }
+                // [FIX] Do not include the generic character description in the image prompt.
+                // The panel_description from the AI is self-contained and specific.
+                panelPrompt = `${activeProfile.style} ${panel.panel_description}.`;
+            } else {
+                panelPrompt = `${activeProfile.style} ${panel.description}`;
+            }
+            
+            if (panel.dialogue && panel.dialogue.trim() !== '') {
+                panelPrompt += ` A speech bubble clearly says: "${panel.dialogue}".`;
+            }
+
+            const imageRequest = buildImageRequest(panelPrompt, config.imageGeneration.size);
+            const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
+            const tempImagePath = path.join(process.cwd(), `temp_panel_${i}.png`);
+            fs.writeFileSync(tempImagePath, Buffer.from(imageResponse.data[0].b64_json, 'base64'));
+            panelImagePaths.push(tempImagePath);
+            console.log(`[APP-SUCCESS] Panel ${i + 1} created: ${tempImagePath}`);
+        }
+
+        // 4. Stitch images together into a 2x2 grid
+        console.log('[APP-INFO] All panels generated. Composing final comic strip...');
+        const finalImagePath = path.join(process.cwd(), `comic-strip-${Date.now()}.png`);
+        const [width, height] = config.imageGeneration.size.split('x').map(Number);
+
+        await sharp({
+            create: {
+                width: width * 2,
+                height: height * 2,
+                channels: 4,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            }
+        })
+        .composite(
+            [
+                { input: panelImagePaths[0], top: 0, left: 0 },
+                { input: panelImagePaths[1], top: 0, left: width },
+                { input: panelImagePaths[2], top: height, left: 0 },
+                { input: panelImagePaths[3], top: height, left: width }
+            ]
+        )
+        .png()
+        .toFile(finalImagePath);
+
+        console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
+
+        // 5. Clean up temporary panel images
+        for (const p of panelImagePaths) {
+            fs.unlinkSync(p);
+        }
+        console.log('[APP-INFO] Cleaned up temporary panel images.');
+
+        // 6. Queue the final job
+        const newJob = {
+            id: uuidv4(),
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+            topic: postDetails.topic,
+            summary: summary,
+            imagePath: finalImagePath,
+            platforms: postDetails.platforms,
+            profile: path.basename(config.prompt.profilePath || 'default'),
+        };
+
+        const queue = JSON.parse(fs.readFileSync(QUEUE_FILE_PATH, 'utf8'));
+        queue.push(newJob);
+        fs.writeFileSync(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
+        console.log(`[APP-SUCCESS] New comic strip job ${newJob.id} added to the queue.`);
+        return { success: true };
+
+    } catch (error) {
+        console.error("[APP-FATAL] An error occurred during comic strip generation:", error);
+        return { success: false };
+    } finally {
+        config.prompt = originalPromptConfig;
+    }
+}
+
 // --- Creative Profile Management ---
+
 async function manageCreativeProfiles() {
     const activeProfile = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : 'Default';
     const { action } = await inquirer.prompt([
@@ -285,15 +689,32 @@ async function loadProfile() {
 
     try {
         const profilePath = path.join(PROFILES_DIR, profileToLoad);
-        const profileData = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
-        
-        // Assign the loaded profile data to the config
-        config.prompt = profileData;
+        const profileContent = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+
+        // [FIX] To prevent stale keys, load the base config first, then overwrite its prompt section.
+        const baseConfig = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+
+        // Overwrite the entire prompt object with the new profile's content
+        baseConfig.prompt = profileContent;
+
+        // [FIX] Explicitly set the workflow based on the profile. If the profile
+        // doesn't define a workflow, default to 'standard' to avoid carrying
+        // over incorrect states from the previous configuration.
+        if (!baseConfig.prompt.workflow) {
+            baseConfig.prompt.workflow = 'standard';
+        }
+
         // Store the path to the loaded profile file for state tracking
-        config.prompt.profilePath = profilePath;
-        
-        fs.writeFileSync('./config.json', JSON.stringify(config, null, 2));
+        baseConfig.prompt.profilePath = profilePath;
+
+        // Save the corrected, clean configuration
+        fs.writeFileSync('./config.json', JSON.stringify(baseConfig, null, 2));
+
+        // Update the in-memory config to match
         console.log(`[APP-SUCCESS] Profile "${profileToLoad}" loaded and set as the active configuration.`);
+
+        // [FIX] Force a reload of the config to avoid caching issues.
+        config = loadConfig();
 
     } catch (error) {
         console.error(`[APP-ERROR] Failed to load profile "${profileToLoad}":`, error);
@@ -326,16 +747,25 @@ async function createNewProfile() {
     }
 
     const profilePath = path.join(PROFILES_DIR, `${filename}.json`);
-    fs.writeFileSync(profilePath, JSON.stringify(newProfile, null, 2));
-    console.log(`[APP-SUCCESS] New profile saved to "${profilePath}"`);
+    try {
+        fs.writeFileSync(profilePath, JSON.stringify(newProfile, null, 2));
+        console.log(`[APP-SUCCESS] New profile saved to "${profilePath}"`);
+    } catch (e) {
+        console.error(`[APP-ERROR] Failed to save profile: "${profilePath}". Error:`, e);
+        return;
+    }
 
     const { loadNow } = await inquirer.prompt([{ type: 'confirm', name: 'loadNow', message: 'Load this new profile now?', default: true }]);
     if (loadNow) {
         // Store the path to the new profile file for state tracking
         newProfile.profilePath = profilePath;
         config.prompt = newProfile;
-        fs.writeFileSync('./config.json', JSON.stringify(config, null, 2));
-        console.log(`[APP-SUCCESS] Profile "${filename}.json" is now the active configuration.`);
+        try {
+            fs.writeFileSync('./config.json', JSON.stringify(config, null, 2));
+            console.log(`[APP-SUCCESS] Profile "${filename}.json" is now the active configuration.`);
+        } catch (e) {
+            console.error(`[APP-ERROR] Failed to save active profile to config.json. Error:`, e);
+        }
     }
 }
 
@@ -356,8 +786,12 @@ async function deleteProfile() {
     const { confirmDelete } = await inquirer.prompt([{ type: 'confirm', name: 'confirmDelete', message: `Are you sure you want to permanently delete "${profileToDelete}"?`, default: false }]);
 
     if (confirmDelete) {
-        fs.unlinkSync(path.join(PROFILES_DIR, profileToDelete));
-        console.log(`[APP-SUCCESS] Profile "${profileToDelete}" has been deleted.`);
+        try {
+            fs.unlinkSync(path.join(PROFILES_DIR, profileToDelete));
+            console.log(`[APP-SUCCESS] Profile "${profileToDelete}" has been deleted.`);
+        } catch (e) {
+            console.error(`[APP-ERROR] Failed to delete profile: "${profileToDelete}". Error:`, e);
+        }
     }
 }
 
@@ -396,11 +830,16 @@ async function runAIBatchGeneration() {
     // --- AI Content Planner Prompt ---
     const plannerPrompt = `You are a content planner for a political cartoon series. Based on the theme "${theme}", generate a list of ${count} distinct and specific topics suitable for individual cartoons. Please respond with ONLY a single, raw JSON object. The object must have a single key "topics" which is an array of strings. Do not include markdown ticks or any other explanatory text.`;
 
-    const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent(plannerPrompt));
-    const geminiRawOutput = (await geminiResult.response).text();
-    const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1);
-    const parsedResult = JSON.parse(jsonString);
-    const topics = parsedResult.topics;
+    let topics = [];
+    try {
+        const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent(plannerPrompt));
+        const geminiRawOutput = (await geminiResult.response).text();
+        const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1);
+        const parsedResult = JSON.parse(jsonString);
+        topics = parsedResult.topics;
+    } catch (e) {
+        console.error("[APP-ERROR] The AI content planner returned invalid JSON. Raw output:", e);
+    }
 
     if (!topics || topics.length === 0) {
         console.error("[APP-ERROR] The AI content planner did not return any topics. Aborting batch generation.");
@@ -583,6 +1022,59 @@ function getPendingJobCount() {
     }
 }
 
+async function clearQueueAndCleanup() {
+    console.log("\n--- Clear Job Queue & Cleanup Files ---");
+
+    const { confirm } = await inquirer.prompt([
+        {
+            type: 'confirm',
+            name: 'confirm',
+            message: 'This will delete all pending jobs from the queue and remove any unassociated image files. Are you sure?',
+            default: false,
+        }
+    ]);
+
+    if (!confirm) {
+        console.log('[APP-INFO] Operation cancelled.');
+        return;
+    }
+
+    try {
+        // Clear the queue
+        try {
+            fs.writeFileSync(QUEUE_FILE_PATH, JSON.stringify([], null, 2));
+            console.log('[APP-SUCCESS] Job queue has been cleared.');
+        } catch (e) {
+            console.error('[APP-ERROR] Failed to clear the job queue. Error:', e);
+        }
+
+        // Cleanup image files
+        const files = fs.readdirSync(process.cwd());
+        const imageFiles = files.filter(f => f.startsWith('post-image-') || f.startsWith('comic-strip-'));
+        
+        let deletedCount = 0;
+        for (const file of imageFiles) {
+            // In a real scenario, you'd check if the file is associated with a COMPLETED job
+            // but for this request, we're keeping it simple and deleting all of them.
+            try {
+                fs.unlinkSync(path.join(process.cwd(), file));
+                deletedCount++;
+            } catch (err) {
+                console.warn(`[APP-WARN] Could not delete file: ${file}. It might be in use.`);
+            }
+        }
+
+        if (deletedCount > 0) {
+            console.log(`[APP-SUCCESS] Removed ${deletedCount} old image files.`);
+        } else {
+            console.log('[APP-INFO] No old image files found to remove.');
+        }
+
+    } catch (error) {
+        console.error('[APP-FATAL] An error occurred during cleanup:', error);
+    }
+}
+
 
 function getLoggedInPlatforms() {
     const loggedIn = [];
@@ -618,6 +1110,7 @@ async function main() {
         }
 
         choices.push(
+            'Clear Job Queue & Cleanup Files',
             'Manage Creative Profiles',
             'Initial Login Setup (Run this first!)',
             new inquirer.Separator(),
@@ -633,42 +1126,51 @@ async function main() {
 
         switch (action) {
             case 'Generate and Queue a New Post':
-                const answers = await inquirer.prompt([
-                    { 
-                        type: 'editor', 
-                        name: 'topic', 
-                        message: 'Enter the topic:', 
-                        default: config.search.defaultTopic 
-                    },
-                    {
-                        type: 'confirm',
-                        name: 'skipSummarization',
-                        message: 'Use this topic directly as the post summary (skips AI summary generation)?',
-                        default: false,
-                        when: (answers) => answers.topic.trim().length > 0
-                    },
-                    { 
-                        type: 'checkbox', 
-                        name: 'platforms', 
-                        message: 'Queue for which platforms?', 
-                        choices: ['X', 'LinkedIn'] 
-                    },
-                    { 
-                        type: 'confirm', 
-                        name: 'confirm', 
-                        message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, 
-                        default: true,
-                        when: (answers) => answers.topic && answers.platforms.length > 0
-                    }
-                ]);
+                // [FIX] Always read the latest config from disk to ensure ground truth.
+                config = loadConfig();
+                
+                // [IMPROVEMENT] Use the 'workflow' key for robust and clear routing.
+                if (config.prompt.workflow === 'comicStrip') {
+                    // Comic Strip Workflow
+                    const comicAnswers = await inquirer.prompt([
+                        { type: 'editor', name: 'topic', message: 'Enter the topic for the 4-panel comic strip:', default: config.search.defaultTopic },
+                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'], validate: i => i.length > 0 },
+                        { type: 'confirm', name: 'confirm', message: 'Proceed with generating this comic strip?', default: true }
+                    ]);
 
-                if (answers.confirm) {
-                    await generateAndQueuePost(
-                        { topic: answers.topic, platforms: answers.platforms },
-                        answers.skipSummarization 
-                    );
+                    if (comicAnswers.confirm) {
+                        await generateAndQueueComicStrip({ topic: comicAnswers.topic, platforms: comicAnswers.platforms });
+                    } else {
+                        console.log('[APP-INFO] Comic strip generation cancelled.');
+                    }
+                } else if (config.prompt.workflow === 'virtualInfluencer') {
+                    // [RESTORATION] Restored Virtual Influencer Workflow
+                    const answers = await inquirer.prompt([
+                        { type: 'editor', name: 'topic', message: 'Enter the topic for the Virtual Influencer:', default: config.search.defaultTopic },
+                        { type: 'confirm', name: 'skipSummarization', message: 'Use this topic directly as the post summary (skips AI summary generation)?', default: false, when: (answers) => answers.topic.trim().length > 0 },
+                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'], validate: i => i.length > 0 },
+                        { type: 'confirm', name: 'confirm', message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, default: true, when: (answers) => answers.topic && answers.platforms.length > 0 }
+                    ]);
+
+                    if (answers.confirm) {
+                        await generateVirtualInfluencerPost({ topic: answers.topic, platforms: answers.platforms }, answers.skipSummarization);
+                    } else {
+                        console.log('[APP-INFO] Post generation cancelled.');
+                    }
                 } else {
-                    console.log('[APP-INFO] Post generation cancelled.');
+                    // Standard or Multi-Character Scene Workflow
+                    const answers = await inquirer.prompt([
+                        { type: 'editor', name: 'topic', message: 'Enter the topic:', default: config.search.defaultTopic },
+                        { type: 'confirm', name: 'skipSummarization', message: 'Use this topic directly as the post summary (skips AI summary generation)?', default: false, when: (answers) => answers.topic.trim().length > 0 },
+                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'], validate: i => i.length > 0 },
+                        { type: 'confirm', name: 'confirm', message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, default: true, when: (answers) => answers.topic && answers.platforms.length > 0 }
+                    ]);
+
+                    if (answers.confirm) {
+                        await generateAndQueuePost({ topic: answers.topic, platforms: answers.platforms }, answers.skipSummarization);
+                    } else {
+                        console.log('[APP-INFO] Post generation cancelled.');
+                    }
                 }
                 break;
             case 'Create Post from Local Media':
@@ -679,6 +1181,9 @@ async function main() {
                 break;
             case `Process Job Queue (${pendingJobs} pending)`:
                 await runWorker();
+                break;
+            case 'Clear Job Queue & Cleanup Files':
+                await clearQueueAndCleanup();
                 break;
             case 'Manage Creative Profiles':
                 await manageCreativeProfiles();

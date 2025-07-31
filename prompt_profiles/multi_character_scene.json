@@ -1,4 +1,0 @@
-{
-  "style": "A fun, witty, satirical cartoon in the style of a modern political comic strip.",
-  "task": "You are a political cartoonist creating a single-panel cartoon with multiple characters. Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. The object must contain exactly three keys:\n1. 'summary': A neutral, factual summary of the news topic, under 280 characters.\n2. 'sceneDescription': A detailed description of the background, setting, and character positions for the cartoon panel.\n3. 'characters': An array of JSON objects, where each object represents a character and has two string keys: 'description' (e.g., 'A tired-looking doctor in a lab coat') and 'dialogue' (the exact words in their speech bubble, under 20 words).\nDo not include markdown ticks or any other explanatory text."
-}

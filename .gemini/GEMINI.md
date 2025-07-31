@@ -74,3 +74,7 @@ To support the standard protocol, the file system tools must be used as follows:
 *   **Refactoring Protocol:**
     *   **1. Trace Dependencies First:** Before proposing a code change, explicitly map out and state the functions that call the target code and the functions that the target code calls.
     *   **2. One Logical Change at a Time:** Do not bundle multiple, independent refactoring steps into a single operation. Each patch should be atomic and verifiable.
+
+**Debugging Principle: Occam's Razor and Top-Down Tracing**
+
+> When diagnosing a bug, always start with the simplest possible explanation (the principle of Occam's Razor). Before investigating complex hypotheses like state management flaws or subtle race conditions, trace the code's execution path from the user's entry point (e.g., a main menu, an API endpoint, or the `main` function). Verify that the high-level control flow (like `switch` statements or `if/else` chains) is correctly routing the request. This "top-down" approach ensures that simple, structural errors are ruled out first, preventing time spent on unnecessarily complex and potentially incorrect theories.

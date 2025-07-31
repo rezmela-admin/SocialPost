@@ -41,4 +41,6 @@ Thumbs.db
 *.code-workspace
 /_dev_archive/
 /backups/Error.txt
+Error.txt
 backups/
+plans/

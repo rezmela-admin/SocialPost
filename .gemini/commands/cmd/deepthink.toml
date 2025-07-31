@@ -1,0 +1,4 @@
+# Invoked as: /deepthink "Your prompt here"
+description = "Most powerful model (gemini-2.5-pro), best for complex problem-solving, deep refactoring, and architectural planning."
+model = "gemini-2.5-pro"
+prompt = "{{args}}"

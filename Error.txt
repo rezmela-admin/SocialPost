@@ -1,24 +1,64 @@
-[WORKER-INFO] Worker started. Checking for pending jobs...
-[WORKER-INFO] Found job 69927efa-0289-400c-b0c1-119f6628f9cd. Locking and processing...
-[WORKER-INFO] Processing platform: X for job 69927efa-0289-400c-b0c1-119f6628f9cd
-[WORKER-INFO] Navigating to compose URL: https://x.com/compose/post
-[WORKER-INFO] Preparing to upload image...
-[WORKER-INFO] Waiting for image to be processed...
-[WORKER-INFO] Writing post text...
-[WORKER-INFO] Clicking final post button...
-[WORKER-INFO] Waiting for post confirmation...
-[WORKER-SUCCESS] Confirmation element is visible.
-[WORKER-SUCCESS] Platform post confirmed successfully!
-[WORKER-INFO] Finished processing X.
-[WORKER-INFO] Processing platform: LinkedIn for job 69927efa-0289-400c-b0c1-119f6628f9cd
-[WORKER-INFO] Navigating to compose URL: https://www.linkedin.com/feed/
-[WORKER-INFO] Clicking 'Start a post' button...
-[WORKER-INFO] Preparing to upload image...
-[WORKER-INFO] Clicking 'Next' after image upload...
-[WORKER-INFO] Writing post text...
-[WORKER-INFO] Clicking final post button...
-[WORKER-INFO] Waiting for post confirmation...
-[WORKER-SUCCESS] Compose modal has disappeared.
-[WORKER-SUCCESS] Platform post confirmed successfully!
-[WORKER-INFO] Finished processing LinkedIn.
-[WORKER-INFO] Job 69927efa-0289-400c-b0c1-119f6628f9cd finished with status: completed.
+ Manage Creative Profiles
+? Creative Profiles Menu (Current: virtual_influencer.json) Load a Profile (Switch to a different character/style)
+? Which profile would you like to load? virtual_influencer.json
+[APP-SUCCESS] Profile "virtual_influencer.json" loaded and set as the active configuration.
+[APP-INFO] Loading configuration from config.json...
+? What would you like to do?
+  - Active Profile: virtual_influencer
+  - Logged In: X, LinkedIn
+ Generate and Queue a New Post
+[APP-INFO] Loading configuration from config.json...
+? Enter the topic for the Virtual Influencer: Received
+? Use this topic directly as the post summary (skips AI summary generation)? No
+? Queue for which platforms? X, LinkedIn
+? Generate post about "Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness
+and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism
+ prefer short, private exercise sessions." for X, LinkedIn? Yes
+
+[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism prefer short, private exercise sessions."
+? Generated summary:
+
+"A recent study from University College London indicates a significant correlation between personality traits and the
+effectiveness of different exercise modalities. The findings suggest that personalized fitness regimens, tailored to an
+individual's disposition, can lead to superior physical outcomes and greater stress reduction. Specifically, the
+research highlights that extroverted individuals may derive more benefit from high-intensity interval training (HIIT),
+likely due to its stimulating and often social nature. Conversely, individuals with higher levels of neuroticism tend to
+ respond better to shorter, private exercise sessions, which may minimize feelings of anxiety or self-consciousness
+often associated with public gym environments. This approach challenges the 'one-size-fits-all' model of fitness,
+advocating for a more psychologically informed strategy to improve both workout adherence and overall well-being."
+
+Approve or edit? Approve
+? Generated dialogue:
+
+"The most effective workout is one that complements your personality."
+
+Approve or edit? Approve
+? Generated background prompt:
+
+"A serene and minimalist home workout space during the early morning. Soft, diffused sunlight streams through a large,
+clean window, illuminating a light oak wood floor. In the center, a dark grey yoga mat is unrolled, creating a clear
+focal point. To the side of the mat, a single black kettlebell and a set of sleek, chrome dumbbells are neatly arranged.
+ A water bottle with condensation sits next to them. The background through the window is a softly blurred view of a
+tranquil, green garden, enhancing the sense of privacy and peace. The overall atmosphere is calm, uncluttered, and
+inviting, designed for focused, individual exercise. The lighting is natural and gentle, with no harsh shadows."
+
+Approve or edit? Approve
+[APP-INFO] Phase 1: Generating character on a neutral background for inpainting...
+[APP-DEBUG] OpenAI API Request: {
+  "model": "gpt-image-1",
+  "prompt": "A hyper-realistic, professional photograph, cinematic lighting, 8k resolution. Create a highly realistic digital portrait of a middle-aged South Asian man in his 50s, with medium-brown skin and short, slightly tousled black hair with graying temples. He wears stylish matte black rectangular glasses and discreet black wireless earbuds. His expression features a gentle half-smirk that subtly reveals dimples, paired with warm, introspective eyes that suggest depth and quiet intelligence. He is dressed in a dark navy-blue button-up shirt with a refined floral pattern. The background is softly blurred in warm, neutral tones, and the lighting is soft and cinematic - with natural highlights on the cheeks and forehead to convey serenity and thoughtfulness. The overall vibe is modern, approachable, and intellectually grounded - suited for an AI mentor or thoughtful creative professional.His clothes are appropriate for the Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism prefer short, private exercise sessions.. His facial expression reflects the mood of the Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism prefer short, private exercise sessions.., with a speech bubble that clearly says: \"The most effective workout is one that complements your personality.\". The background should be a solid, neutral light grey., with a 5% margin of empty space around the entire image to act as a safe zone. The speech bubble must be positioned so it is fully visible and not cut off by the edges of the image.",
+  "n": 1,
+  "size": "1024x1024",
+  "moderation": "low"
+}
+[APP-SUCCESS] Phase 1 complete. Transparent character saved to: D:\Gemini\SocialPost\temp_character_1753817836131.png
+[APP-INFO] Phase 2: Calling Python script to inpaint the background...
+[PYTHON] Opening image from: D:\Gemini\SocialPost\temp_character_1753817836131.png
+[PYTHON] API call successful. Decoding image...
+[PYTHON] Successfully saved edited image to: D:\Gemini\SocialPost\post-image-1753817883206.png
+[APP-SUCCESS] Phase 2 complete. Final image saved to: D:\Gemini\SocialPost\post-image-1753817883206.png
+[APP-INFO] Cleaned up temporary character file.
+[APP-SUCCESS] New Virtual Influencer job cec093a6-8d56-4126-b42d-355ca517c780 added to the queue.
+? What would you like to do?
+  - Active Profile: virtual_influencer
+  - Logged In: X, LinkedInn
