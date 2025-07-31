@@ -1,0 +1,5 @@
+{
+  "workflow": "comicStrip",
+  "style": "A fun, witty, satirical cartoon in the style of a modern political comic strip.",
+  "task": "You are a political cartoonist creating a four-panel comic strip. Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. The object must contain exactly two keys:\n1. 'summary': A neutral, factual summary of the news topic, under 280 characters, to be used as the post text.\n2. 'panels': An array of exactly four JSON objects. Each object represents one panel of the comic strip and must have two string keys: 'description' (a detailed visual description of the scene and characters for that panel) and 'dialogue' (the exact words in a speech bubble for that panel, which can be an empty string if there is no dialogue). The story must flow logically from one panel to the next.\nDo not include markdown ticks or any other explanatory text."
+}

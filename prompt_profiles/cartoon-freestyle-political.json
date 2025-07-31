@@ -1,0 +1,4 @@
+{
+  "style": "A serious, editorial-style political cartoon in the style of The New Yorker.",
+  "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a formal, insightful summary of the news) and 'imagePrompt' (a detailed, thought-provoking visual description for an AI image generator, suitable for a serious political cartoon)."
+}
