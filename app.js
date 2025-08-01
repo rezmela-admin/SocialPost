@@ -16,6 +16,7 @@ import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp';
+import { getTextGenerator } from './src/lib/text-generators/index.js';
 
 const PROFILES_DIR = './prompt_profiles';
 const QUEUE_FILE_PATH = path.join(process.cwd(), 'post_queue.json');
@@ -35,8 +36,7 @@ export function loadConfig() {
 
 let config = loadConfig();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: config.textGeneration.model });
+const textGenerator = getTextGenerator(config);
 
 // --- Utility Functions ---
 function debugLog(message) {
@@ -145,8 +145,7 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
 
         if (!skipSummarization) {
             const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
-            const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: taskPrompt }] }], safetySettings }));
-            const geminiRawOutput = (await geminiResult.response).text();
+            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt, safetySettings));
             try {
                 const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
                 parsedResult = JSON.parse(jsonString);
@@ -275,8 +274,7 @@ async function generateImageWithRetry(initialPrompt, size, maxRetries = 3) {
             if (i > 0) {
                 console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating prompt after safety rejection...`);
                 const regenPrompt = `The previous cartoon prompt was rejected by the image generation safety system. Please generate a new, alternative prompt for a political cartoon about the same topic that is less likely to be rejected. The original prompt was: "${initialPrompt}"`;
-                const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent(regenPrompt));
-                currentPrompt = (await geminiResult.response).text();
+                currentPrompt = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
                 console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
             }
             
@@ -325,9 +323,8 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
         if (!skipSummarization) {
             // --- AI Content Generation ---
             const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
-            const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: taskPrompt }] }], safetySettings }));
-            if (geminiResult && geminiResult.response) {
-                const geminiRawOutput = (await geminiResult.response).text();
+            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt, safetySettings));
+            if (geminiRawOutput) {
                 try {
                     const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
                     parsedResult = JSON.parse(jsonString);
@@ -495,8 +492,7 @@ async function generateAndQueueComicStrip(postDetails) {
             debugLog(`Gemini Comic Strip Prompt (Attempt ${attempts}):\n${fullPrompt}`);
             
             try {
-                const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent({ contents: [{ role: "user", parts: [{ text: fullPrompt }] }], safetySettings }));
-                const geminiRawOutput = (await geminiResult.response).text();
+                const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(fullPrompt, safetySettings));
                 const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
                 
                 parsedResult = JSON.parse(jsonString);
@@ -832,8 +828,7 @@ async function runAIBatchGeneration() {
 
     let topics = [];
     try {
-        const geminiResult = await geminiRequestWithRetry(() => geminiModel.generateContent(plannerPrompt));
-        const geminiRawOutput = (await geminiResult.response).text();
+        const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(plannerPrompt));
         const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1);
         const parsedResult = JSON.parse(jsonString);
         topics = parsedResult.topics;

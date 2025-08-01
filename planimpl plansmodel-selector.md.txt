@@ -1,0 +1,2 @@
+/plan:impl plans/model-selector.md
+/plan:new Add a model selector

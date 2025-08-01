@@ -6,9 +6,9 @@
       "composeUrl": "https://x.com/compose/post",
       "selectors": {
         "fileInput": "[data-testid='primaryColumn'] [data-testid='fileInput']",
-        "imagePreview": "[data-testid='tweetPhoto']",
+        "imagePreview": "div[data-testid='attachments'] img",
         "textBox": "[data-testid='primaryColumn'] [data-testid='tweetTextarea_0']",
-        "postButton": "[data-testid='tweetButton']",
+        "postButton": "div[role='dialog'] button:has-text('Post')",
         "confirmationLocator": "[data-testid='toast']"
       }
     },
@@ -41,7 +41,27 @@
     "imageFileName": "daily_cartoon.png"
   },
   "textGeneration": {
-    "model": "gemini-2.5-pro"
+    "provider": "deepseek",
+    "providers": {
+      "gemini": {
+        "model": "gemini-2.5-flash",
+        "apiKeyEnv": "GEMINI_API_KEY"
+      },
+      "openai": {
+        "model": "gpt-4.1-mini",
+        "apiKeyEnv": "OPENAI_API_KEY"
+      },
+      "deepseek": {
+        "apiKeyEnv": "DEEPSEEK_API_KEY",
+        "apiUrl": "https://api.deepseek.com/v1/chat/completions",
+        "model": "deepseek-chat"
+      },
+      "kimi": {
+        "apiKeyEnv": "KIMI_API_KEY",
+        "apiUrl": "https://api.moonshot.cn/v1/chat/completions",
+        "model": "moonshot-v1-8k"
+      }
+    }
   },
   "framingOptions": [
     "A medium-shot portrait, framed from the waist up.",
