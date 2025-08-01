@@ -73,6 +73,9 @@
     "enabled": true,
     "preserveTemporaryFiles": true
   },
+  "displaySettings": {
+    "showBannerOnStartup": true
+  },
   "timezone": "America/New_York",
   "postProcessing": {
     "actionAfterSuccess": "delete",

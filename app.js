@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp';
 import { getTextGenerator } from './src/lib/text-generators/index.js';
+import { displayBanner } from './src/lib/ui/banner.js';
 
 const PROFILES_DIR = './prompt_profiles';
 const QUEUE_FILE_PATH = path.join(process.cwd(), 'post_queue.json');
@@ -1084,6 +1085,10 @@ function getLoggedInPlatforms() {
 
 // --- Main Application Loop ---
 async function main() {
+    config = loadConfig();
+    if (config.displaySettings && config.displaySettings.showBannerOnStartup) {
+        displayBanner();
+    }
     let keepGoing = true;
     while (keepGoing) {
         const activeProfile = config.prompt.profilePath 
