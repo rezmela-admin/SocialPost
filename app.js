@@ -376,11 +376,9 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
             } else {
                 let characterPrompts = characters.map(charAction => {
                     const characterData = characterLibrary[charAction.character];
-                    if (!characterData) {
-                        console.warn(`[APP-WARN] AI returned character key "${charAction.character}" which was not found in the library. Skipping.`);
-                        return '';
-                    }
-                    return `${characterData.description} says, "${charAction.dialogue}".`;
+                    // [FIX] If character is not in the library, trust the AI and use the name directly.
+                    const description = characterData ? characterData.description : `A depiction of ${charAction.character}`;
+                    return `${description} says, "${charAction.dialogue}".`;
                 }).filter(p => p).join(' ');
 
                 finalImagePrompt = `${config.prompt.style} ${sceneDescription}. ${characterPrompts}`;
@@ -482,45 +480,17 @@ async function generateAndQueueComicStrip(postDetails) {
 
 
         let parsedResult;
-        let validationError = '';
-        let attempts = 0;
-
-        while (attempts < 3) {
-            attempts++;
-            console.log(`[APP-INFO] Attempt ${attempts} to generate valid comic panels...`);
-
-            const fullPrompt = validationError ? `${taskPrompt}\n\n${validationError}` : taskPrompt;
-            debugLog(`Gemini Comic Strip Prompt (Attempt ${attempts}):\n${fullPrompt}`);
-            
-            try {
-                const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(fullPrompt, safetySettings));
-                const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
-                
-                parsedResult = JSON.parse(jsonString);
-                
-                // [REFACTOR] Validate against the global library.
-                const invalidPanels = parsedResult.panels.filter(panel => !characterLibrary[panel.character]);
-
-                if (invalidPanels.length === 0) {
-                    console.log('[APP-SUCCESS] Successfully generated valid comic panels.');
-                    validationError = '';
-                    break; 
-                } else {
-                    const invalidKeys = invalidPanels.map(p => p.character).join(', ');
-                    validationError = `You previously used invalid character keys: ${invalidKeys}. Please select characters ONLY from the provided library.`;
-                    console.warn(`[APP-WARN] AI returned invalid character keys: ${invalidKeys}. Retrying...`);
-                }
-            } catch (e) {
-                validationError = `You previously returned invalid JSON. Please ensure your output is a single, valid JSON object.`;
-                console.warn(`[APP-WARN] AI returned invalid JSON. Retrying...`);
-            }
-        }
-
-        if (validationError) {
-            console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI after ${attempts} attempts. Aborting.`);
+        try {
+            console.log(`[APP-INFO] Attempting to generate valid comic panels...`);
+            debugLog(`Gemini Comic Strip Prompt:\n${taskPrompt}`);
+            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt, safetySettings));
+            const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+            parsedResult = JSON.parse(jsonString);
+            console.log('[APP-SUCCESS] Successfully generated comic panels from AI.');
+        } catch (e) {
+            console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI. Aborting.`, e);
             return { success: false };
         }
-
 
         let { summary, panels } = parsedResult;
 
@@ -539,24 +509,9 @@ async function generateAndQueueComicStrip(postDetails) {
             const panel = panels[i];
             let panelPrompt;
 
-            if (hasCharacterLibrary) {
-                const characterKey = panel.character;
-                // [REFACTOR] Validate against the global library.
-                const characterDescription = characterLibrary[characterKey];
-                if (!characterDescription) {
-                    console.warn(`[APP-WARN] Character key "${characterKey}" from AI not found in the global character_library.json. Skipping panel.`);
-                    // Create a blank image as a placeholder to avoid crashing the composition
-                    const tempImagePath = path.join(process.cwd(), `temp_panel_${i}.png`);
-                    await sharp({ create: { width: 1024, height: 1024, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } }).toFile(tempImagePath);
-                    panelImagePaths.push(tempImagePath);
-                    continue;
-                }
-                // [FIX] Do not include the generic character description in the image prompt.
-                // The panel_description from the AI is self-contained and specific.
-                panelPrompt = `${activeProfile.style} ${panel.panel_description}.`;
-            } else {
-                panelPrompt = `${activeProfile.style} ${panel.description}`;
-            }
+            // [FIX] Trust the AI's panel_description. It should be self-contained.
+            // We no longer validate against the character library, allowing for well-known figures.
+            panelPrompt = `${activeProfile.style} ${panel.panel_description || panel.description}`;
             
             if (panel.dialogue && panel.dialogue.trim() !== '') {
                 panelPrompt += ` A speech bubble clearly says: "${panel.dialogue}".`;
@@ -688,30 +643,19 @@ async function loadProfile() {
         const profilePath = path.join(PROFILES_DIR, profileToLoad);
         const profileContent = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
 
-        // [FIX] To prevent stale keys, load the base config first, then overwrite its prompt section.
-        const baseConfig = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+        // Overwrite the prompt section of the IN-MEMORY config
+        config.prompt = profileContent;
 
-        // Overwrite the entire prompt object with the new profile's content
-        baseConfig.prompt = profileContent;
-
-        // [FIX] Explicitly set the workflow based on the profile. If the profile
-        // doesn't define a workflow, default to 'standard' to avoid carrying
-        // over incorrect states from the previous configuration.
-        if (!baseConfig.prompt.workflow) {
-            baseConfig.prompt.workflow = 'standard';
+        // Explicitly set the workflow based on the profile.
+        if (!config.prompt.workflow) {
+            config.prompt.workflow = 'standard';
         }
 
         // Store the path to the loaded profile file for state tracking
-        baseConfig.prompt.profilePath = profilePath;
+        config.prompt.profilePath = profilePath;
 
-        // Save the corrected, clean configuration
-        fs.writeFileSync('./config.json', JSON.stringify(baseConfig, null, 2));
-
-        // Update the in-memory config to match
-        console.log(`[APP-SUCCESS] Profile "${profileToLoad}" loaded and set as the active configuration.`);
-
-        // [FIX] Force a reload of the config to avoid caching issues.
-        config = loadConfig();
+        console.log(`[APP-SUCCESS] Profile "${profileToLoad}" loaded for the current session.`);
+        // No file is written, the change is only for this session.
 
     } catch (error) {
         console.error(`[APP-ERROR] Failed to load profile "${profileToLoad}":`, error);
@@ -1126,9 +1070,6 @@ async function main() {
 
         switch (action) {
             case 'Generate and Queue a New Post':
-                // [FIX] Always read the latest config from disk to ensure ground truth.
-                config = loadConfig();
-                
                 // [IMPROVEMENT] Use the 'workflow' key for robust and clear routing.
                 if (config.prompt.workflow === 'comicStrip') {
                     // Comic Strip Workflow

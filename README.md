@@ -1,67 +1,95 @@
 # Automated Social Media Bot v2.0
 
-This project contains an automated bot for generating and posting content to social media. It has evolved into a robust, job-based system that separates content creation from the posting process.
+This project contains an automated bot for generating and posting content to social media. It uses a worker-based architecture to separate content creation from the posting process, allowing for asynchronous and reliable operation.
 
-## Core Architecture
+## Features
 
-The application uses a worker-based architecture for improved reliability and asynchronous operation.
+- **Asynchronous Job Queue:** Create multiple posts without waiting for each one to upload.
+- **Multi-Platform Support:** Post to X (Twitter) and LinkedIn.
+- **AI-Powered Content Generation:**
+  - Uses Google Gemini for text generation.
+  - Uses OpenAI DALL-E for image generation.
+- **Flexible Content Creation:**
+  - Generate content from a news topic.
+  - Provide your own post text and generate only an image.
+  - Post directly from local image or video files.
+- **Advanced Creative Control:** Use creative profiles to switch between different artistic styles and prompt structures.
+- **Batch Processing:** Generate and queue multiple posts from a single high-level theme.
+- **Secure Session Management:** Saves your social media login sessions so you only have to log in once.
 
-*   **`app.js` (The Frontend):** This is the main, interactive script you run from your terminal. Its purpose is to handle user input, generate content (text and images), and add "jobs" to a queue file. It does **not** do the posting itself.
-*   **`worker.js` (The Backend):** This script is launched by `app.js` when you choose to process the queue. Its only job is to find pending jobs in the queue, log in to the specified social media platforms, upload the content, and update the job's status.
-*   **`post_queue.json`:** This file is the central nervous system of the bot. It acts as the communication channel between the app and the worker, storing all pending, processing, and completed jobs.
+## Installation
 
-## Core Features
+Follow these steps to set up and run the application.
 
--   **Asynchronous Job Queue:** Create multiple posts without waiting for each one to upload. The worker processes them sequentially.
--   **Multi-Platform Support:** Post to X (Twitter) and LinkedIn.
--   **AI-Powered Content Generation:**
-    -   Uses the Google Gemini API to generate post summaries and image prompts from a topic.
-    -   Uses the OpenAI DALL-E API (`gpt-image-1`) to generate high-quality images.
--   **Flexible Content Creation:**
-    -   **AI Summarization:** Let the AI generate a summary from a news topic.
-    -   **Skip Summarization:** Provide your own post text and use the AI just for generating the image.
-    -   **Post from Local Media:** Bypass AI image generation entirely and provide a path to a local image or video file.
--   **Advanced Creative Control:**
-    -   **Creative Profiles:** Switch between different artistic styles, character personas, or prompt structures using a simple menu.
-    -   **Multi-Character Scenes:** A dedicated profile (`multi_character_scene.json`) allows the AI to generate a single image with multiple characters and their dialogues, perfect for richer storytelling.
--   **Batch Processing:**
-    -   **AI Batch Generation:** Provide a high-level theme (e.g., "US political news") and let the AI generate and queue multiple, distinct posts automatically.
--   **Secure Session Management:** Securely saves your social media login sessions, so you only have to log in once per platform.
+### 1. Prerequisites: Node.js
 
-## How to Use
+This application requires Node.js. If you don't have it, download and install the latest LTS version.
 
-The application is designed to be run from a single terminal window.
+- **[Download Node.js](https://nodejs.org/en/download)**
+
+Verify the installation by opening a terminal and running `node -v`.
+
+### 2. Project Setup
+
+#### A. Clone the Repository
+Clone this repository to your local machine.
+
+#### B. Install Dependencies
+Navigate to the project directory in your terminal and run:
+```bash
+npm install
+```
+This will install the necessary libraries from `package.json`.
+
+#### C. Install Browsers for Automation
+The application uses Playwright for browser automation. Install the required browsers by running:
+```bash
+npx playwright install
+```
+
+### 3. Configuration
+
+The application requires API keys for OpenAI and Gemini.
+
+1.  Find the `.env.example` file.
+2.  Create a copy of it and rename the copy to `.env`.
+3.  Open the `.env` file and add your API keys:
+    ```
+    OPENAI_API_KEY="your_openai_api_key_here"
+    GEMINI_API_KEY="your_gemini_api_key_here"
+    ```
+4.  Save the file.
+
+## Usage
+
+The application is split into two main parts: the interactive app (`app.js`) and the background worker (`worker.js`).
 
 ### Step 1: Initial Login (One-Time Setup)
 
-Before you can post, you need to create login sessions for the platforms you intend to use.
+Before you can queue posts, you must log in to your social media accounts to create a valid session.
 
-1.  Run the application: `node app.js`
-2.  From the main menu, select **Initial Login Setup**.
-3.  A browser window will open. Log in to your social media account(s) as prompted.
-4.  Once you successfully log in, the application will save an encrypted session file. You will not need to do this again unless the session expires.
+1.  Run the main application:
+    ```bash
+    node app.js
+    ```
+2.  From the menu, select **Initial Login Setup**.
+3.  A browser window will open. Log in to your accounts as prompted. The application will save your session for future use.
 
-### Step 2: Create and Queue a Post
+### Step 2: Generate and Queue a Post
 
-You have several options for creating content, all available from the main menu:
+1.  Run `node app.js`.
+2.  Choose one of the content creation options from the menu:
+    - **Generate and Queue a New Post:** The standard workflow.
+    - **Create Post from Local Media:** Post a local image or video.
+    - **Generate Batch of Posts with AI:** Create multiple posts at once.
+3.  Follow the prompts to generate and approve your content. A new job will be added to the `post_queue.json` file.
 
-*   **Generate and Queue a New Post:** The standard workflow. The app will guide you through providing a topic, getting an AI-generated summary and image, and approving the content before adding it to the queue.
-*   **Create Post from Local Media:** This option lets you bypass the AI image generator. You provide the path to a local image/video file, write the post text, and add it to the queue.
-*   **Generate Batch of Posts with AI:** A powerful feature for creating multiple posts at once. You provide a theme, and the AI handles the rest.
+### Step 3: Process the Queue
 
-### Step 3: Process the Job Queue
+When you are ready to publish your queued posts, run the worker:
 
-Once you have one or more pending jobs in the queue, a new option will appear on the main menu.
+```bash
+node worker.js
+```
 
-1.  Select **Process Job Queue (# pending)** from the main menu.
-2.  The application will launch the background worker, which will start posting the queued jobs. You will see the progress directly in your terminal.
-3.  Once all jobs are processed, you will be prompted to press Enter to return to the main menu.
-
-## Core Files
-
-*   **`app.js`**: The user-facing main application.
-*   **`worker.js`**: The background processor for posting jobs.
-*   **`config.json`**: Contains all key configuration, including API models, social media URLs, and selectors.
-*   **`post_queue.json`**: The job queue file.
-*   **`/prompt_profiles/`**: A directory containing different JSON files that define the creative style and structure of the AI-generated content.
-*   **`*.session.json`**: Encrypted session files for social media platforms (e.g., `x_session.json`). **Do not share these.**
+The worker will find pending jobs in the queue and post them one by one. You can run this script at any time. For full automation, consider setting up a scheduled task (like a cron job or Windows Task Scheduler) to run it periodically.

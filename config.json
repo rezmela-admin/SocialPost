@@ -30,10 +30,10 @@
     "defaultTopic": "Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism prefer short, private exercise sessions."
   },
   "prompt": {
-    "workflow": "comicStrip",
+    "workflow": "multiCharacterScene",
     "style": "A fun, witty, satirical cartoon in the style of a modern political comic strip.",
-    "task": "You are a political cartoonist creating a four-panel comic strip. Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. The object must contain exactly two keys:\n1. 'summary': A neutral, factual summary of the news topic, under 280 characters.\n2. 'panels': An array of exactly four JSON objects. Each object represents one panel and must have three string keys: 'character' (which MUST be an exact match to one of the following keys: {CHARACTER_KEYS}), 'panel_description' (a description of the character's action and the background scene for that panel), and 'dialogue' (the exact words for the speech bubble, which can be an empty string).\n\n**IMPORTANT**: The comic strip panels MUST feature the main individuals mentioned in the '{TOPIC}'. You may use other characters from the library for supporting roles, but the central figures of the topic must be the focus of the story.\n\nDo not invent new character keys. Your response must be a valid JSON object.",
-    "profilePath": "prompt_profiles\\comic-character-driven-political.json"
+    "task": "You are a political cartoonist creating a single-panel cartoon with multiple characters from a predefined library. Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. The object must contain exactly three keys:\n1. 'summary': A neutral, factual summary of the news topic, under 280 characters.\n2. 'sceneDescription': A detailed description of the background, setting, and character positions for the cartoon panel.\n3. 'characters': An array of JSON objects. Each object represents a character and must have two string keys: 'character' (which MUST be an exact key from the provided character library: {CHARACTER_KEYS}) and 'dialogue' (the exact words in their speech bubble, under 20 words).\nDo not include markdown ticks or any other explanatory text.",
+    "profilePath": "prompt_profiles\\scene-character-driven-general.json"
   },
   "imageGeneration": {
     "model": "gpt-image-1",
