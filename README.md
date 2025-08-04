@@ -4,8 +4,9 @@ This project contains an automated bot for generating and posting content to soc
 
 ## Features
 
+- **Cost-Effective Automation:** Bypasses expensive API fees on platforms like X and LinkedIn by using intelligent browser automation, making it accessible for everyone.
+- **Hybrid Platform Support:** Uses stable, official APIs where available (e.g., Bluesky) and robust browser automation for platforms with restrictive APIs (e.g., X, LinkedIn).
 - **Asynchronous Job Queue:** Create multiple posts without waiting for each one to upload.
-- **Multi-Platform Support:** Post to X (Twitter) and LinkedIn.
 - **AI-Powered Content Generation:**
   - Uses Google Gemini for text generation.
   - Uses OpenAI DALL-E for image generation.

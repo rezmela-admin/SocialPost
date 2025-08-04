@@ -4,28 +4,69 @@
 // This worker runs in the background, processing jobs from post_queue.json.
 // It is designed to be run on a schedule (e.g., via a cron job).
 // ============================================================================
+import { BskyAgent } from '@atproto/api';
 import { chromium } from 'playwright';
+import fsPromises from 'fs/promises';
 import fs from 'fs';
 import path from 'path';
 import 'dotenv/config';
+import sharp from 'sharp';
 
 const QUEUE_FILE_PATH = path.join(process.cwd(), 'post_queue.json');
 
 // --- Configuration Loading ---
-function loadConfig() {
+async function loadConfig() {
     try {
-        const configFile = fs.readFileSync('./config.json', 'utf8');
-        return JSON.parse(configFile);
+        const configFileContent = await fsPromises.readFile('./config.json', 'utf8');
+        return JSON.parse(configFileContent);
     } catch (error) {
         console.error("[WORKER-FATAL] Error loading or parsing config.json:", error);
         process.exit(1);
     }
 }
 
-const config = loadConfig();
+// --- Bluesky Posting Logic ---
+async function postToBluesky(job, config) {
+    const handle = process.env.BLUESKY_HANDLE;
+    const appPassword = process.env.BLUESKY_APP_PASSWORD;
+
+    if (!handle || !appPassword) {
+        throw new Error('Bluesky handle or app password not set in .env file.');
+    }
+    
+    const agent = new BskyAgent({ service: config.socialMedia.Bluesky.serviceUrl });
+    await agent.login({ identifier: handle, password: appPassword });
+    
+    const absoluteImagePath = path.join(process.cwd(), job.imagePath);
+    
+    let imageBuffer;
+    const stats = await fsPromises.stat(absoluteImagePath);
+    const fileSizeInMB = stats.size / (1024 * 1024);
+
+    if (fileSizeInMB > 0.95) { // Check if file size is > 0.95MB
+        console.log(`[WORKER-INFO] Image is ${fileSizeInMB.toFixed(2)}MB, resizing for Bluesky...`);
+        imageBuffer = await sharp(absoluteImagePath)
+            .resize(1024, null, { withoutEnlargement: true }) // Resize width to 1024px
+            .jpeg({ quality: 85 }) // Convert to JPEG for smaller size
+            .toBuffer();
+    } else {
+        imageBuffer = await fsPromises.readFile(absoluteImagePath);
+    }
+
+    const uploadResponse = await agent.uploadBlob(imageBuffer, { encoding: 'image/jpeg' });
+    
+    await agent.post({
+        text: job.summary,
+        embed: {
+            $type: 'app.bsky.embed.images',
+            images: [{ image: uploadResponse.data.blob, alt: job.topic }]
+        }
+    });
+}
 
 // --- Generic Posting Logic ---
 async function postToPlatform(page, job, platformConfig) {
+    const absoluteImagePath = path.join(process.cwd(), job.imagePath);
     const { summary, imagePath } = job;
     const { composeUrl, selectors } = platformConfig;
 
@@ -45,16 +86,16 @@ async function postToPlatform(page, job, platformConfig) {
         await page.waitForSelector(selectors.fileInput, { state: 'attached', timeout: 60000 });
         // Use the generic selector for X, as it's more reliable.
         if (platformConfig.composeUrl.includes('x.com')) {
-            await page.setInputFiles('input[type="file"]', imagePath);
+            await page.setInputFiles('input[type="file"]', absoluteImagePath);
         } else {
-            await page.locator(selectors.fileInput).setInputFiles(imagePath);
+            await page.locator(selectors.fileInput).setInputFiles(absoluteImagePath);
         }
     } else if (selectors.addMediaButton) {
         // File chooser dialog (e.g., LinkedIn)
         const fileChooserPromise = page.waitForEvent('filechooser');
         await page.locator(selectors.addMediaButton).click();
         const fileChooser = await fileChooserPromise;
-        await fileChooser.setFiles(imagePath);
+        await fileChooser.setFiles(absoluteImagePath);
     }
      if (selectors.imagePreview) {
         console.log("[WORKER-INFO] Waiting for image to be processed...");
@@ -113,96 +154,135 @@ async function postToPlatform(page, job, platformConfig) {
 
 
 // --- Worker Main Logic ---
-async function processQueue() {
-    console.log('[WORKER-INFO] Worker started. Checking for pending jobs...');
-
-    let queue = [];
-    try {
-        queue = JSON.parse(fs.readFileSync(QUEUE_FILE_PATH, 'utf8'));
-    } catch (error) {
-        console.error('[WORKER-FATAL] Could not read or parse queue file:', error);
-        return;
-    }
-
-    const job = queue.find(j => j.status === 'pending');
-
-    if (!job) {
-        console.log('[WORKER-INFO] No pending jobs found. Worker shutting down.');
-        return;
-    }
-
+async function processJob(job, config) {
     console.log(`[WORKER-INFO] Found job ${job.id}. Locking and processing...`);
     
-    // Lock the job
-    job.status = 'processing';
-    job.processedAt = new Date().toISOString();
-    fs.writeFileSync(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
+    // Read the queue, find the specific job, and mark it as 'processing'
+    let queue = JSON.parse(await fsPromises.readFile(QUEUE_FILE_PATH, 'utf8'));
+    const jobToProcess = queue.find(j => j.id === job.id);
+    if (!jobToProcess || jobToProcess.status !== 'pending') {
+        console.log(`[WORKER-INFO] Job ${job.id} is no longer pending. Skipping.`);
+        return; // Job was already processed by another worker or is not pending
+    }
+    jobToProcess.status = 'processing';
+    jobToProcess.processedAt = new Date().toISOString();
+    await fsPromises.writeFile(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
 
     let overallSuccess = true;
+    const errors = [];
 
     for (const platformName of job.platforms) {
-        let browser = null;
-        const sessionFilePath = path.join(process.cwd(), `${platformName.toLowerCase()}_session.json`);
-        const platformConfig = config.socialMedia[platformName];
-
-        if (!platformConfig || !platformConfig.selectors) {
-            console.error(`[WORKER-ERROR] Configuration for platform "${platformName}" is missing or incomplete.`);
-            overallSuccess = false;
-            continue; // Skip to the next platform
-        }
-
         try {
             console.log(`[WORKER-INFO] Processing platform: ${platformName} for job ${job.id}`);
-            browser = await chromium.launch({ headless: false }); // Headless can be true for production
-
-            if (!fs.existsSync(sessionFilePath)) {
-                throw new Error(`Session file for ${platformName} not found. Please log in first using the main application.`);
+            if (platformName === 'Bluesky') {
+                await postToBluesky(job, config);
+            } else {
+                // This is a browser-based platform
+                let browser = null;
+                try {
+                    const sessionFilePath = path.join(process.cwd(), `${platformName.toLowerCase()}_session.json`);
+                    const platformConfig = config.socialMedia[platformName];
+                    if (!platformConfig || !platformConfig.selectors) {
+                        throw new Error(`Configuration for platform "${platformName}" is missing or incomplete.`);
+                    }
+                    if (!fs.existsSync(sessionFilePath)) {
+                        throw new Error(`Session file for ${platformName} not found. Please log in first.`);
+                    }
+                    browser = await chromium.launch({ headless: false });
+                    const context = await browser.newContext({ storageState: sessionFilePath });
+                    const page = await context.newPage();
+                    await postToPlatform(page, job, platformConfig);
+                } finally {
+                    if (browser) await browser.close();
+                }
             }
-            const context = await browser.newContext({ storageState: sessionFilePath });
-            const page = await context.newPage();
-
-            await postToPlatform(page, job, platformConfig);
-
+            console.log(`[WORKER-SUCCESS] Successfully posted to ${platformName}.`);
         } catch (error) {
-            console.error(`[WORKER-ERROR] Failed to post to ${platformName} for job ${job.id}:`, error);
+            console.error(`[WORKER-ERROR] Failed to post to ${platformName} for job ${job.id}:`, error.message);
             overallSuccess = false;
-            job.errors = job.errors || [];
-            job.errors.push({ platform: platformName, error: error.message, timestamp: new Date().toISOString() });
-        } finally {
-            if (browser) {
-                await browser.close();
-            }
-            console.log(`[WORKER-INFO] Finished processing ${platformName}.`);
+            errors.push({ platform: platformName, error: error.message, timestamp: new Date().toISOString() });
         }
     }
 
-    // Update the job status
-    job.status = overallSuccess ? 'completed' : 'failed';
-    fs.writeFileSync(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
+    // Re-read the queue, find the job, and update its final status
+    queue = JSON.parse(await fsPromises.readFile(QUEUE_FILE_PATH, 'utf8'));
+    const jobToUpdate = queue.find(j => j.id === job.id);
+    if (jobToUpdate) {
+        jobToUpdate.status = overallSuccess ? 'completed' : 'failed';
+        jobToUpdate.errors = errors;
+        await fsPromises.writeFile(QUEUE_FILE_PATH, JSON.stringify(queue, null, 2));
+        console.log(`[WORKER-INFO] Job ${job.id} finished with status: ${jobToUpdate.status}.`);
+    }
 
-    console.log(`[WORKER-INFO] Job ${job.id} finished with status: ${job.status}.`);
-    
-    // --- [NEW] Post-Processing Logic ---
-    // Clean up the image file if the job was successful and not in debug mode
+    // Post-processing (cleanup)
     if (overallSuccess && (!config.debug || !config.debug.preserveTemporaryFiles)) {
-        if (fs.existsSync(job.imagePath)) {
+        const absoluteImagePath = path.join(process.cwd(), job.imagePath);
+        try {
+            await fsPromises.access(absoluteImagePath);
             const action = config.postProcessing?.actionAfterSuccess || 'delete';
-            
             if (action === 'backup') {
                 const backupDir = config.postProcessing?.backupFolderPath || './post_backups';
-                if (!fs.existsSync(backupDir)) {
-                    fs.mkdirSync(backupDir, { recursive: true });
-                }
+                await fsPromises.mkdir(backupDir, { recursive: true });
                 const backupPath = path.join(backupDir, path.basename(job.imagePath));
-                fs.renameSync(job.imagePath, backupPath);
+                await fsPromises.rename(absoluteImagePath, backupPath);
                 console.log(`[WORKER-INFO] Image for job ${job.id} backed up to: ${backupPath}`);
-            } else { // Default to delete
-                fs.unlinkSync(job.imagePath);
+            } else {
+                await fsPromises.unlink(absoluteImagePath);
                 console.log(`[WORKER-INFO] Image for job ${job.id} deleted.`);
+            }
+        } catch (error) {
+            if (error.code !== 'ENOENT') {
+                console.warn(`[WORKER-WARN] Could not clean up file ${job.imagePath}:`, error);
             }
         }
     }
 }
 
+async function processQueue() {
+    console.log('[WORKER-INFO] Worker started. Checking for pending jobs...');
+    const config = await loadConfig();
+
+    // Check for Playwright dependencies once at the start
+    try {
+        await chromium.launch({ headless: true });
+    } catch (e) {
+        if (e.message.includes('Host system is missing dependencies')) {
+            console.error(`[WORKER-FATAL] Playwright dependencies are not installed. Please run 'npx playwright install-deps'`);
+            process.exit(1);
+        }
+    }
+
+    const exitAfterSingleJob = config.worker?.exitAfterSingleJob === true;
+
+    if (exitAfterSingleJob) {
+        console.log('[WORKER-INFO] Mode: Process a single job and exit.');
+        const queue = JSON.parse(await fsPromises.readFile(QUEUE_FILE_PATH, 'utf8'));
+        const job = queue.find(j => j.status === 'pending');
+        if (job) {
+            await processJob(job, config);
+        } else {
+            console.log('[WORKER-INFO] No pending jobs found.');
+        }
+    } else {
+        console.log('[WORKER-INFO] Mode: Process all pending jobs.');
+        while (true) {
+            const queue = JSON.parse(await fsPromises.readFile(QUEUE_FILE_PATH, 'utf8'));
+            const job = queue.find(j => j.status === 'pending');
+            if (!job) {
+                console.log('[WORKER-INFO] No more pending jobs found.');
+                break; // Exit the loop
+            }
+            await processJob(job, config);
+            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+        }
+    }
+}
+
 // --- Entry Point ---
-processQueue();
+processQueue().then(() => {
+    console.log('[WORKER-INFO] Worker has finished its tasks.');
+    process.exit(0);
+}).catch(error => {
+    console.error('[WORKER-FATAL] An unhandled error occurred in the worker:', error);
+    process.exit(1);
+});

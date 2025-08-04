@@ -1,25 +1,8 @@
-[APP-DEBUG] Received response from image generator.
-[APP-SUCCESS] Image created and saved to: D:\Gemini\SocialPost\post-image-1753988007855.png
-[APP-SUCCESS] New job 211a2a5d-c375-49d4-9134-0a591da70726 added to the queue for platforms: X.
-? What would you like to do?
-  - Active Profile: cartoon-freestyle-witty
-  - Logged In: X, LinkedIn
- Process Job Queue (1 pending)
+[APP-DEBUG] Gemini Comic Strip Prompt:
+You are a political cartoonist creating a four-panel comic strip. Based on the news about 'Elon Musk and Yan Lecun are having an intense exchange over X platform. Elon Musk has ordered the removal of researcher title from employees and believes that only engineers are worthy because the work they do is accountable. Lecun on the other hand believes researchers have one job to expand the knowledge domain without being tied down to product performance on the market place.', you must respond with ONLY a single, raw JSON object. The object must contain exactly two keys:
+1. 'summary': A neutral, factual summary of the news topic, under 280 characters.
+2. 'panels': An array of exactly four JSON objects. Each object represents one panel and must have three string keys: 'character' (which MUST be an exact match to one of the following keys: "Elon Musk", "Jensen Huang", "Marc Andreessen", "David Sacks", "Sundar Pichai", "Satya Nadella", "Bill Gates", "Steve Jobs", "Donald Trump", "Mark Zuckerberg", "Sam Altman", "Dalai Lama", "Pope Leo XIII", "Alexandria Ocasio-Cortez", "Zohran Mamdani", "Bernie Sanders", "Taylor Swift", "Lionel Messi", "Beyoncé", "Tim Cook", "Greta Thunberg", "Narendra Modi", "Ramesh", "Buddha", "Jesus Christ", "Albert Einstein", "Marie Curie", "Nikola Tesla", "Isaac Newton", "Stephen Hawking", "Katherine Johnson", "Xi Jinping", "Scarlett Johansson", "Emma Stone", "Zendaya", "Margot Robbie", "Rihanna", "Sydney Sweeney", "Sadhguru", "Joe Rogan", "Kanye West", "Dave Chappelle", "Yann LeCun", "Geoffrey Hinton", "Seth Godin", "Bozoma Saint John", "Gary Vaynerchuk", "Philip Kotler", "Eliezer Yudkowsky", "Nate Soares", "Jan Leike"), 'panel_description' (a description of the character's action and the background scene for that panel), and 'dialogue' (the exact words for the speech bubble, which can be an empty string).
 
-[APP-INFO] Starting the worker process...
-[WORKER-INFO] Worker started. Checking for pending jobs...
-[WORKER-INFO] Found job 211a2a5d-c375-49d4-9134-0a591da70726. Locking and processing...
-[WORKER-INFO] Processing platform: X for job 211a2a5d-c375-49d4-9134-0a591da70726
-[WORKER-INFO] Navigating to compose URL: https://x.com/compose/post
-[WORKER-INFO] Preparing to upload image...
-[WORKER-INFO] Waiting for image to be processed...
-[WORKER-INFO] Writing post text...
-[WORKER-INFO] Clicking final post button...
-[WORKER-ERROR] Failed to post to X for job 211a2a5d-c375-49d4-9134-0a591da70726: locator.click: Timeout 60000ms exceeded.
-Call log:
-  - waiting for locator('[data-testid=\'sheetDialog\'] [data-testid=\'tweetButton\']')
+**IMPORTANT**: The comic strip panels MUST feature the main individuals mentioned in the '{TOPIC}'. You may use other characters from the library for supporting roles, but the central figures of the topic must be the focus of the story.
 
-    at postToPlatform (D:\Gemini\SocialPost\worker.js:84:46)
-    at async processQueue (D:\Gemini\SocialPost\worker.js:164:13) {
-  name: 'TimeoutError'
-}
+Do not invent new character keys. Your response must be a valid JSON object.

@@ -24,6 +24,9 @@
         "postButton": "button.share-actions__primary-action",
         "composeModal": "div[aria-labelledby='share-to-linkedin-modal__header']"
       }
+    },
+    "Bluesky": {
+      "serviceUrl": "https://bsky.social"
     }
   },
   "search": {
@@ -80,5 +83,8 @@
   "postProcessing": {
     "actionAfterSuccess": "delete",
     "backupFolderPath": "./post_backups"
+  },
+  "worker": {
+    "exitAfterSingleJob": true
   }
 }

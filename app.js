@@ -246,7 +246,7 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
             createdAt: new Date().toISOString(),
             topic: postDetails.topic,
             summary: summary,
-            imagePath: finalImagePath,
+            imagePath: path.basename(finalImagePath),
             platforms: postDetails.platforms,
             profile: activeProfileName,
         };
@@ -426,7 +426,7 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
             createdAt: new Date().toISOString(),
             topic: postDetails.topic,
             summary: summary,
-            imagePath: imagePath,
+            imagePath: path.basename(imagePath),
             platforms: postDetails.platforms,
             profile: activeProfileName || 'default',
         };
@@ -564,7 +564,7 @@ async function generateAndQueueComicStrip(postDetails) {
             createdAt: new Date().toISOString(),
             topic: postDetails.topic,
             summary: summary,
-            imagePath: finalImagePath,
+            imagePath: path.basename(finalImagePath),
             platforms: postDetails.platforms,
             profile: path.basename(config.prompt.profilePath || 'default'),
         };
@@ -858,13 +858,21 @@ async function createPostFromLocalMedia() {
     }
 
     try {
+        const sourcePath = answers.imagePath;
+        const destinationFilename = path.basename(sourcePath);
+        const destinationPath = path.join(process.cwd(), destinationFilename);
+
+        // Copy the file to the project directory
+        fs.copyFileSync(sourcePath, destinationPath);
+        console.log(`[APP-INFO] Copied media file to ${destinationPath}`);
+
         const newJob = {
             id: uuidv4(),
             status: 'pending',
             createdAt: new Date().toISOString(),
             topic: 'Post from local media', // Use a generic topic
             summary: answers.summary,
-            imagePath: answers.imagePath, // The user-provided absolute path
+            imagePath: destinationFilename, // Use the relative path
             platforms: answers.platforms,
             profile: 'local_media', // A special profile name for these types of posts
         };
@@ -882,16 +890,41 @@ async function createPostFromLocalMedia() {
 
 // --- Initial Login Setup ---
 
+async function loginToBluesky() {
+    console.log('\n--- Bluesky Login ---');
+    const { handle } = await inquirer.prompt([
+        { type: 'input', name: 'handle', message: 'Enter your Bluesky handle (e.g., yourname.bsky.social):', validate: input => !!input }
+    ]);
+    const { appPassword } = await inquirer.prompt([
+        { type: 'password', name: 'appPassword', message: 'Enter your Bluesky App Password (not your main password):', mask: '*', validate: input => !!input }
+    ]);
+
+    const credentials = { identifier: handle, password: appPassword };
+    const filePath = path.join(process.cwd(), 'bluesky_credentials.json');
+
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(credentials, null, 2));
+        console.log(`[APP-SUCCESS] Bluesky credentials saved to: ${filePath}`);
+    } catch (error) {
+        console.error(`[APP-ERROR] Failed to save Bluesky credentials:`, error);
+    }
+}
+
 async function initialLogin() {
     console.log('[APP-INFO] Starting initial login setup...');
     const { platforms } = await inquirer.prompt([{        type: 'checkbox',
         name: 'platforms',
-        message: 'Select platforms to log in to. This will open a browser window.',
-        choices: ['X', 'LinkedIn'],
+        message: 'Select platforms to log in to. This will open a browser window for X and LinkedIn.',
+        choices: ['X', 'LinkedIn', 'Bluesky'],
         validate: input => input.length > 0 || 'Please select at least one platform.'
     }]);
 
     for (const platform of platforms) {
+        if (platform === 'Bluesky') {
+            await loginToBluesky();
+            continue;
+        }
+
         const sessionFilePath = path.join(process.cwd(), `${platform.toLowerCase()}_session.json`);
         if (fs.existsSync(sessionFilePath)) {
             console.log(`[APP-INFO] Session for ${platform} already exists. Skipping login.`);
@@ -927,16 +960,10 @@ async function runWorker() {
     return new Promise((resolve, reject) => {
         const workerProcess = spawn('node', ['worker.js'], { stdio: 'inherit' });
 
-        workerProcess.on('close', async (code) => {
-            console.log(`\n[APP-INFO] Worker process finished with exit code ${code}.`);
-            // This prompt ensures that we wait for user input before proceeding,
-            // which prevents the main menu from appearing prematurely and causing
-            // the "double enter" issue.
-            await inquirer.prompt([{
-                type: 'input',
-                name: 'continue',
-                message: 'Press Enter to return to the main menu...',
-            }]);
+        workerProcess.on('close', (code) => {
+            console.log(`
+[APP-INFO] Worker process finished with exit code ${code}.`);
+            // The worker is done, resolve the promise to return to the main menu.
             resolve();
         });
 
@@ -1024,6 +1051,9 @@ function getLoggedInPlatforms() {
     if (fs.existsSync(path.join(process.cwd(), 'linkedin_session.json'))) {
         loggedIn.push('LinkedIn');
     }
+    if (fs.existsSync(path.join(process.cwd(), 'bluesky_credentials.json'))) {
+        loggedIn.push('Bluesky');
+    }
     return loggedIn;
 }
 
@@ -1075,7 +1105,7 @@ async function main() {
                     // Comic Strip Workflow
                     const comicAnswers = await inquirer.prompt([
                         { type: 'editor', name: 'topic', message: 'Enter the topic for the 4-panel comic strip:', default: config.search.defaultTopic },
-                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'], validate: i => i.length > 0 },
+                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn', 'Bluesky'], validate: i => i.length > 0 },
                         { type: 'confirm', name: 'confirm', message: 'Proceed with generating this comic strip?', default: true }
                     ]);
 
@@ -1089,7 +1119,7 @@ async function main() {
                     const answers = await inquirer.prompt([
                         { type: 'editor', name: 'topic', message: 'Enter the topic for the Virtual Influencer:', default: config.search.defaultTopic },
                         { type: 'confirm', name: 'skipSummarization', message: 'Use this topic directly as the post summary (skips AI summary generation)?', default: false, when: (answers) => answers.topic.trim().length > 0 },
-                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'], validate: i => i.length > 0 },
+                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn', 'Bluesky'], validate: i => i.length > 0 },
                         { type: 'confirm', name: 'confirm', message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, default: true, when: (answers) => answers.topic && answers.platforms.length > 0 }
                     ]);
 
@@ -1103,7 +1133,7 @@ async function main() {
                     const answers = await inquirer.prompt([
                         { type: 'editor', name: 'topic', message: 'Enter the topic:', default: config.search.defaultTopic },
                         { type: 'confirm', name: 'skipSummarization', message: 'Use this topic directly as the post summary (skips AI summary generation)?', default: false, when: (answers) => answers.topic.trim().length > 0 },
-                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn'], validate: i => i.length > 0 },
+                        { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn', 'Bluesky'], validate: i => i.length > 0 },
                         { type: 'confirm', name: 'confirm', message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, default: true, when: (answers) => answers.topic && answers.platforms.length > 0 }
                     ]);
 
