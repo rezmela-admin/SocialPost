@@ -50,16 +50,46 @@ npx playwright install
 
 ### 3. Configuration
 
-The application requires API keys for OpenAI and Gemini.
+The application requires API keys for the AI services you intend to use.
 
 1.  Find the `.env.example` file.
 2.  Create a copy of it and rename the copy to `.env`.
-3.  Open the `.env` file and add your API keys:
+3.  Open the `.env` file and add your API keys for the services you want to use (e.g., OpenAI, Gemini).
     ```
     OPENAI_API_KEY="your_openai_api_key_here"
     GEMINI_API_KEY="your_gemini_api_key_here"
     ```
 4.  Save the file.
+
+#### Selecting the Image Generation Provider
+
+You can choose between different AI providers for image generation by editing the `config.json` file.
+
+-   Open `config.json`.
+-   Locate the `imageGeneration` section.
+-   Set the `provider` key to `"openai"` or `"gemini"`.
+-   Set the `model` key to a model supported by your chosen provider.
+
+**Example for OpenAI:**
+```json
+"imageGeneration": {
+  "provider": "openai",
+  "model": "gpt-image-1",
+  "size": "1024x1024",
+  "imageFileName": "daily_cartoon.png"
+}
+```
+
+**Example for Gemini:**
+```json
+"imageGeneration": {
+  "provider": "gemini",
+  "model": "imagen-4",
+  "size": "1024x1024",
+  "imageFileName": "daily_cartoon.png"
+}
+```
+
 
 ## Usage
 

@@ -6,7 +6,6 @@
 // script is responsible for processing these jobs.
 // ============================================================================
 import { chromium } from 'playwright';
-import OpenAI from 'openai';
 import { GoogleGenerativeAI, GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import fs from 'fs';
 import path from 'path';
@@ -17,7 +16,9 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp';
 import { getTextGenerator } from './src/lib/text-generators/index.js';
+import { getImageGenerator } from './src/lib/image-generators/index.js';
 import { displayBanner } from './src/lib/ui/banner.js';
+import chalk from 'chalk';
 
 const PROFILES_DIR = './prompt_profiles';
 const QUEUE_FILE_PATH = path.join(process.cwd(), 'post_queue.json');
@@ -36,8 +37,8 @@ export function loadConfig() {
 }
 
 let config = loadConfig();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const textGenerator = getTextGenerator(config);
+let imageGenerator; // Will be loaded asynchronously
 
 // --- Utility Functions ---
 function debugLog(message) {
@@ -55,26 +56,16 @@ async function getApprovedInput(text, inputType) {
         if (action === 'Approve') return text;
         if (action === 'Cancel') return null;
         if (action === 'Edit') {
-            try {
-                const { editedText } = await inquirer.prompt([
-                    {
-                        type: 'editor',
-                        name: 'editedText',
-                        message: `Editing ${inputType}. Save and close your editor to continue.`,
-                        default: text,
-                        waitForUserInput: true,
-                    }
-                ]);
-                
-                if (editedText.trim()) {
-                    return editedText.trim();
+            const { editedText } = await inquirer.prompt([
+                {
+                    type: 'editor',
+                    name: 'editedText',
+                    message: `Editing ${inputType}. Save and close your editor to continue.`, 
+                    default: text,
+                    validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`,
                 }
-                
-                console.warn(`[APP-WARN] Edited ${inputType} is empty. Please try again.`);
-
-            } catch (error) {
-                console.error(`[APP-ERROR] Failed to open or handle the editor:`, error);
-            }
+            ]);
+            return editedText.trim();
         }
     }
 }
@@ -84,7 +75,13 @@ async function promptForSpeechBubble(initialPrompt, dialogue, isVirtualInfluence
     const { addSpeechBubble } = await inquirer.prompt([{ type: 'confirm', name: 'addSpeechBubble', message: 'Add a speech bubble?', default: isVirtualInfluencer }]);
     if (!addSpeechBubble) return initialPrompt;
     
-    const { speechBubbleText } = await inquirer.prompt([{ type: 'editor', name: 'speechBubbleText', message: 'Enter speech bubble text:', default: dialogue }]);
+    const { speechBubbleText } = await inquirer.prompt([{ 
+        type: 'editor',
+        name: 'speechBubbleText',
+        message: 'Enter speech bubble text:',
+        default: dialogue,
+        validate: input => input.trim().length > 0 || 'Speech bubble text cannot be empty.'
+    }]);
     
     if (isVirtualInfluencer) {
         return `${initialPrompt} The character has a speech bubble that clearly says: "${speechBubbleText}".`;
@@ -96,7 +93,7 @@ async function promptForSpeechBubble(initialPrompt, dialogue, isVirtualInfluence
 // --- Resilient API Callers ---
 async function apiRequestWithRetry(apiCall, shouldRetry, maxRetries, delay, apiName) {
     for (let i = 0; i < maxRetries; i++) {
-        try { return await apiCall(); }
+        try { return await apiCall(); } 
         catch (error) {
             if (shouldRetry(error)) {
                 const waitTime = delay * Math.pow(2, i);
@@ -107,31 +104,15 @@ async function apiRequestWithRetry(apiCall, shouldRetry, maxRetries, delay, apiN
     }
     throw new Error(`[APP-FATAL] ${apiName} API call failed after ${maxRetries} retries.`);
 }
-async function openaiRequestWithRetry(apiCall) { 
-    const shouldRetry = (error) => error instanceof OpenAI.APIError && error.message.includes('Connection error');
-    return apiRequestWithRetry(apiCall, shouldRetry, 3, 5000, 'OpenAI'); 
-}
-async function geminiRequestWithRetry(apiCall) { return apiRequestWithRetry(apiCall, (e) => e instanceof GoogleGenerativeAIFetchError, 4, 10000, 'Gemini'); }
 
-// --- Image Request Builder ---
-function buildImageRequest(prompt, size, extraParams = {}) {
-    const model = config.imageGeneration.model;
-    let finalPrompt = `${prompt}, with a 5% margin of empty space around the entire image to act as a safe zone.`;
-    if (prompt.includes('speech bubble')) finalPrompt += SPEECH_BUBBLE_INSTRUCTION;
-    
-    const request = { model, prompt: finalPrompt, n: 1, size, ...extraParams };
-    if (model.startsWith('dall-e')) request.response_format = 'b64_json';
-    if (model === 'gpt-image-1') request.moderation = 'low';
-    
-    debugLog(`OpenAI API Request: ${JSON.stringify(request, null, 2)}`);
-    return request;
-}
+async function geminiRequestWithRetry(apiCall) { return apiRequestWithRetry(apiCall, (e) => e instanceof GoogleGenerativeAIFetchError, 4, 10000, 'Gemini'); }
 
 // --- [RESTORATION] Two-Phase Virtual Influencer Post Generation ---
 async function generateVirtualInfluencerPost(postDetails, skipSummarization = false) {
     const originalPromptConfig = { ...config.prompt };
-    if (!process.env.OPENAI_API_KEY) {
-        console.error("[APP-FATAL] OpenAI API key is not configured. Please check your .env file.");
+    // Provider-agnostic check: The imageGenerator will throw its own specific error if a key is missing.
+    if (!imageGenerator) {
+        console.error("[APP-FATAL] Image generator is not available. Check configuration and API keys.");
         return { success: false };
     }
 
@@ -158,8 +139,22 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
         } else {
             summary = postDetails.topic;
             // In skip mode, we still need dialogue and background
-            const { approvedDialogue } = await inquirer.prompt([{ type: 'editor', name: 'approvedDialogue', message: 'Enter the dialogue for the speech bubble:' }]);
-            const { approvedBackground } = await inquirer.prompt([{ type: 'editor', name: 'approvedBackground', message: 'Enter the prompt for the background image:' }]);
+            const { approvedDialogue } = await inquirer.prompt([
+                {
+                    type: 'editor',
+                    name: 'approvedDialogue',
+                    message: 'Enter the dialogue for the speech bubble:',
+                    validate: input => input.trim().length > 0 || 'Dialogue cannot be empty.'
+                }
+            ]);
+            const { approvedBackground } = await inquirer.prompt([
+                {
+                    type: 'editor',
+                    name: 'approvedBackground',
+                    message: 'Enter the prompt for the background image:',
+                    validate: input => input.trim().length > 0 || 'Background prompt cannot be empty.'
+                }
+            ]);
             dialogue = approvedDialogue;
             backgroundPrompt = approvedBackground;
         }
@@ -201,7 +196,7 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
                     type: 'editor',
                     name: 'customFraming',
                     message: 'Enter custom framing instructions. Save and close to continue.',
-                    validate: input => !!input || 'Framing instructions cannot be empty.',
+                    validate: input => input.trim().length > 0 || 'Framing instructions cannot be empty.',
                 },
             ]);
             framingChoice = customFraming;
@@ -215,9 +210,9 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
         const tempCharacterImageName = `temp_character_${Date.now()}.png`;
         const tempCharacterPath = path.join(process.cwd(), tempCharacterImageName);
 
-        const charImageRequest = buildImageRequest(characterPrompt, config.imageGeneration.size);
-        const charImageResponse = await openaiRequestWithRetry(() => openai.images.generate(charImageRequest));
-        fs.writeFileSync(tempCharacterPath, Buffer.from(charImageResponse.data[0].b64_json, 'base64'));
+        // Use the provider here
+        const charImageB64 = await imageGenerator(characterPrompt, config.imageGeneration);
+        fs.writeFileSync(tempCharacterPath, Buffer.from(charImageB64, 'base64'));
         console.log(`[APP-SUCCESS] Phase 1 complete. Character on neutral background saved to: ${tempCharacterPath}`);
 
         // 4. Phase 2: Inpaint Background using Python Script
@@ -231,7 +226,6 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
             console.log(`[APP-SUCCESS] Phase 2 complete. Final image saved to: ${finalImagePath}`);
         } catch (error) {
             console.error("[APP-FATAL] The Python inpainting script failed.", error);
-            // fs.unlinkSync(tempCharacterPath); // Clean up temp file on failure
             return { success: false };
         }
 
@@ -267,7 +261,7 @@ async function generateVirtualInfluencerPost(postDetails, skipSummarization = fa
 
 
 // --- [NEW] Resilient Image Generation with Retries ---
-async function generateImageWithRetry(initialPrompt, size, maxRetries = 3) {
+async function generateImageWithRetry(initialPrompt, maxRetries = 3) {
     let lastError = null;
     for (let i = 0; i < maxRetries; i++) {
         try {
@@ -279,16 +273,17 @@ async function generateImageWithRetry(initialPrompt, size, maxRetries = 3) {
                 console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
             }
             
-            const imageRequest = buildImageRequest(currentPrompt, size);
-            const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
+            // Use the provider function. It returns a Base64 string directly.
+            const imageB64 = await imageGenerator(currentPrompt, config.imageGeneration);
             
-            // If successful, return the result
-            return imageResponse;
+            // If successful, return the result in the expected format for the rest of the app.
+            return imageB64;
 
         } catch (error) {
             lastError = error;
-            // Specifically check for the safety system error
-            if (error.status === 400 && error.error?.message?.includes('safety system')) {
+            // Check for safety system error. This is more generic now.
+            // We check the error message, which is less reliable but necessary for abstraction.
+            if (error.message && error.message.toLowerCase().includes('safety')) {
                 console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retrying
             } else {
@@ -306,8 +301,8 @@ async function generateImageWithRetry(initialPrompt, size, maxRetries = 3) {
 // --- Core Content Generation Function ---
 async function generateAndQueuePost(postDetails, skipSummarization = false) {
     const originalPromptConfig = { ...config.prompt };
-    if (!process.env.OPENAI_API_KEY) {
-        console.error("[APP-FATAL] OpenAI API key is not configured. Please check your .env file.");
+    if (!imageGenerator) {
+        console.error("[APP-FATAL] Image generator is not available. Check configuration and API keys.");
         return { success: false };
     }
 
@@ -412,11 +407,11 @@ async function generateAndQueuePost(postDetails, skipSummarization = false) {
         const uniqueImageName = `post-image-${Date.now()}.png`;
         const imagePath = path.join(process.cwd(), uniqueImageName);
         
-        // Use the new resilient function
-        const imageResponse = await generateImageWithRetry(finalImagePrompt, config.imageGeneration.size);
+        // Use the new resilient function which now returns a base64 string
+        const imageB64 = await generateImageWithRetry(finalImagePrompt);
         
         console.log(`[APP-DEBUG] Received response from image generator.`);
-        fs.writeFileSync(imagePath, Buffer.from(imageResponse.data[0].b64_json, 'base64'));
+        fs.writeFileSync(imagePath, Buffer.from(imageB64, 'base64'));
         console.log(`[APP-SUCCESS] Image created and saved to: ${imagePath}`);
 
         // --- Job Queueing ---
@@ -456,8 +451,8 @@ async function generateAndQueueComicStrip(postDetails) {
     const activeProfile = JSON.parse(fs.readFileSync(activeProfilePath, 'utf8'));
 
     const originalPromptConfig = { ...config.prompt };
-    if (!process.env.OPENAI_API_KEY) {
-        console.error("[APP-FATAL] OpenAI API key is not configured. Please check your .env file.");
+    if (!imageGenerator) {
+        console.error("[APP-FATAL] Image generator is not available. Check configuration and API keys.");
         return { success: false };
     }
 
@@ -517,10 +512,9 @@ async function generateAndQueueComicStrip(postDetails) {
                 panelPrompt += ` A speech bubble clearly says: "${panel.dialogue}".`;
             }
 
-            const imageRequest = buildImageRequest(panelPrompt, config.imageGeneration.size);
-            const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
+            const imageB64 = await imageGenerator(panelPrompt, config.imageGeneration);
             const tempImagePath = path.join(process.cwd(), `temp_panel_${i}.png`);
-            fs.writeFileSync(tempImagePath, Buffer.from(imageResponse.data[0].b64_json, 'base64'));
+            fs.writeFileSync(tempImagePath, Buffer.from(imageB64, 'base64'));
             panelImagePaths.push(tempImagePath);
             console.log(`[APP-SUCCESS] Panel ${i + 1} created: ${tempImagePath}`);
         }
@@ -666,11 +660,11 @@ async function createNewProfile() {
     console.log("\n--- Create New Profile ---");
 
     const { filename } = await inquirer.prompt([
-        { type: 'input', name: 'filename', message: 'Enter a filename for the new profile (e.g., "my_style"):', validate: input => !!input },
+        { type: 'input', name: 'filename', message: 'Enter a filename for the new profile (e.g., "my_style"):', validate: input => input.trim().length > 0 || 'Filename cannot be empty.' },
     ]);
     
     const { newStyle } = await inquirer.prompt([
-        { type: 'input', name: 'newStyle', message: 'Enter the new image style:', default: "A fun, witty, satirical cartoon." },
+        { type: 'input', name: 'newStyle', message: 'Enter the new image style:', default: "A fun, witty, satirical cartoon.", validate: input => input.trim().length > 0 || 'Style cannot be empty.' },
     ]);
 
     const profileTypes = {
@@ -683,17 +677,15 @@ async function createNewProfile() {
     const newProfile = { style: newStyle, task: profileTypes[profileType].task };
 
     if (profileType === "Virtual Influencer") {
-        const { characterDescription } = await inquirer.prompt([{ type: 'input', name: 'characterDescription', message: 'Enter a detailed description of your virtual influencer:', validate: input => !!input }]);
+        const { characterDescription } = await inquirer.prompt([{ type: 'input', name: 'characterDescription', message: 'Enter a detailed description of your virtual influencer:', validate: input => input.trim().length > 0 || 'Character description cannot be empty.' }]);
         newProfile.characterDescription = characterDescription;
     }
-
     const profilePath = path.join(PROFILES_DIR, `${filename}.json`);
     try {
         fs.writeFileSync(profilePath, JSON.stringify(newProfile, null, 2));
         console.log(`[APP-SUCCESS] New profile saved to "${profilePath}"`);
     } catch (e) {
         console.error(`[APP-ERROR] Failed to save profile: "${profilePath}". Error:`, e);
-        return;
     }
 
     const { loadNow } = await inquirer.prompt([{ type: 'confirm', name: 'loadNow', message: 'Load this new profile now?', default: true }]);
@@ -701,12 +693,7 @@ async function createNewProfile() {
         // Store the path to the new profile file for state tracking
         newProfile.profilePath = profilePath;
         config.prompt = newProfile;
-        try {
-            fs.writeFileSync('./config.json', JSON.stringify(config, null, 2));
-            console.log(`[APP-SUCCESS] Profile "${filename}.json" is now the active configuration.`);
-        } catch (e) {
-            console.error(`[APP-ERROR] Failed to save active profile to config.json. Error:`, e);
-        }
+        console.log(`[APP-SUCCESS] Profile "${filename}.json" is now the active configuration for this session.`);
     }
 }
 
@@ -741,7 +728,7 @@ async function runAIBatchGeneration() {
     console.log("\n--- AI-Powered Batch Post Generation ---");
 
     const { theme } = await inquirer.prompt([
-        { type: 'input', name: 'theme', message: 'Enter a high-level theme for the batch:', default: 'US political news this week' }
+        { type: 'input', name: 'theme', message: 'Enter a high-level theme for the batch:', default: 'US political news this week', validate: input => input.trim().length > 0 || 'Theme cannot be empty.' }
     ]);
 
     const { count } = await inquirer.prompt([
@@ -822,6 +809,9 @@ async function createPostFromLocalMedia() {
             name: 'imagePath',
             message: 'Enter the full, absolute path to your local image or video file:',
             validate: (input) => {
+                if (!input.trim()) {
+                    return 'Path cannot be empty.';
+                }
                 if (!path.isAbsolute(input)) {
                     return 'Please provide an absolute path.';
                 }
@@ -893,10 +883,10 @@ async function createPostFromLocalMedia() {
 async function loginToBluesky() {
     console.log('\n--- Bluesky Login ---');
     const { handle } = await inquirer.prompt([
-        { type: 'input', name: 'handle', message: 'Enter your Bluesky handle (e.g., yourname.bsky.social):', validate: input => !!input }
+        { type: 'input', name: 'handle', message: 'Enter your Bluesky handle (e.g., yourname.bsky.social):', validate: input => input.trim().length > 0 || 'Handle cannot be empty.' }
     ]);
     const { appPassword } = await inquirer.prompt([
-        { type: 'password', name: 'appPassword', message: 'Enter your Bluesky App Password (not your main password):', mask: '*', validate: input => !!input }
+        { type: 'password', name: 'appPassword', message: 'Enter your Bluesky App Password (not your main password):', mask: '*', validate: input => input.trim().length > 0 || 'App Password cannot be empty.' }
     ]);
 
     const credentials = { identifier: handle, password: appPassword };
@@ -1060,6 +1050,15 @@ function getLoggedInPlatforms() {
 // --- Main Application Loop ---
 async function main() {
     config = loadConfig();
+    
+    // Asynchronously load the image generator based on the config
+    try {
+        imageGenerator = await getImageGenerator();
+    } catch (error) {
+        console.error("[APP-FATAL] Could not initialize the application.", error);
+        process.exit(1);
+    }
+
     if (config.displaySettings && config.displaySettings.showBannerOnStartup) {
         displayBanner();
     }
@@ -1067,11 +1066,17 @@ async function main() {
     while (keepGoing) {
         const activeProfile = config.prompt.profilePath 
             ? path.basename(config.prompt.profilePath, '.json') 
-            : 'Default (from config.json)';
+            : '<None Selected>';
         const loggedInPlatforms = getLoggedInPlatforms();
         const pendingJobs = getPendingJobCount();
 
-        const message = `What would you like to do?\n  - Active Profile: ${activeProfile}\n  - Logged In: ${loggedInPlatforms.length > 0 ? loggedInPlatforms.join(', ') : 'None'}\n`;
+        console.log(chalk.yellow('\n--- Status ---'));
+        console.log(`- Active Profile: ${chalk.cyan(activeProfile)}`);
+        console.log(`- Logged In:      ${chalk.cyan(loggedInPlatforms.length > 0 ? loggedInPlatforms.join(', ') : 'None')}`);
+        console.log(`- Pending Jobs:   ${chalk.cyan(pendingJobs)}`);
+        console.log(chalk.yellow('----------------\n'));
+
+        const message = `What would you like to do?`;
 
         const choices = [
             'Generate and Queue a New Post',
@@ -1104,7 +1109,13 @@ async function main() {
                 if (config.prompt.workflow === 'comicStrip') {
                     // Comic Strip Workflow
                     const comicAnswers = await inquirer.prompt([
-                        { type: 'editor', name: 'topic', message: 'Enter the topic for the 4-panel comic strip:', default: config.search.defaultTopic },
+                        {
+                            type: 'editor',
+                            name: 'topic',
+                            message: 'Enter the topic for the 4-panel comic strip:',
+                            default: config.search.defaultTopic,
+                            validate: input => input.trim().length > 0 || 'Topic cannot be empty.'
+                        },
                         { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn', 'Bluesky'], validate: i => i.length > 0 },
                         { type: 'confirm', name: 'confirm', message: 'Proceed with generating this comic strip?', default: true }
                     ]);
@@ -1117,7 +1128,13 @@ async function main() {
                 } else if (config.prompt.workflow === 'virtualInfluencer') {
                     // [RESTORATION] Restored Virtual Influencer Workflow
                     const answers = await inquirer.prompt([
-                        { type: 'editor', name: 'topic', message: 'Enter the topic for the Virtual Influencer:', default: config.search.defaultTopic },
+                        {
+                            type: 'editor',
+                            name: 'topic',
+                            message: 'Enter the topic for the Virtual Influencer:',
+                            default: config.search.defaultTopic,
+                            validate: input => input.trim().length > 0 || 'Topic cannot be empty.'
+                        },
                         { type: 'confirm', name: 'skipSummarization', message: 'Use this topic directly as the post summary (skips AI summary generation)?', default: false, when: (answers) => answers.topic.trim().length > 0 },
                         { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn', 'Bluesky'], validate: i => i.length > 0 },
                         { type: 'confirm', name: 'confirm', message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, default: true, when: (answers) => answers.topic && answers.platforms.length > 0 }
@@ -1131,7 +1148,13 @@ async function main() {
                 } else {
                     // Standard or Multi-Character Scene Workflow
                     const answers = await inquirer.prompt([
-                        { type: 'editor', name: 'topic', message: 'Enter the topic:', default: config.search.defaultTopic },
+                        {
+                            type: 'editor',
+                            name: 'topic',
+                            message: 'Enter the topic:',
+                            default: config.search.defaultTopic,
+                            validate: input => input.trim().length > 0 || 'Topic cannot be empty.'
+                        },
                         { type: 'confirm', name: 'skipSummarization', message: 'Use this topic directly as the post summary (skips AI summary generation)?', default: false, when: (answers) => answers.topic.trim().length > 0 },
                         { type: 'checkbox', name: 'platforms', message: 'Queue for which platforms?', choices: ['X', 'LinkedIn', 'Bluesky'], validate: i => i.length > 0 },
                         { type: 'confirm', name: 'confirm', message: (answers) => `Generate post about "${answers.topic}" for ${answers.platforms.join(', ')}?`, default: true, when: (answers) => answers.topic && answers.platforms.length > 0 }

@@ -1,8 +1,17 @@
-[APP-DEBUG] Gemini Comic Strip Prompt:
-You are a political cartoonist creating a four-panel comic strip. Based on the news about 'Elon Musk and Yan Lecun are having an intense exchange over X platform. Elon Musk has ordered the removal of researcher title from employees and believes that only engineers are worthy because the work they do is accountable. Lecun on the other hand believes researchers have one job to expand the knowledge domain without being tied down to product performance on the market place.', you must respond with ONLY a single, raw JSON object. The object must contain exactly two keys:
-1. 'summary': A neutral, factual summary of the news topic, under 280 characters.
-2. 'panels': An array of exactly four JSON objects. Each object represents one panel and must have three string keys: 'character' (which MUST be an exact match to one of the following keys: "Elon Musk", "Jensen Huang", "Marc Andreessen", "David Sacks", "Sundar Pichai", "Satya Nadella", "Bill Gates", "Steve Jobs", "Donald Trump", "Mark Zuckerberg", "Sam Altman", "Dalai Lama", "Pope Leo XIII", "Alexandria Ocasio-Cortez", "Zohran Mamdani", "Bernie Sanders", "Taylor Swift", "Lionel Messi", "Beyoncé", "Tim Cook", "Greta Thunberg", "Narendra Modi", "Ramesh", "Buddha", "Jesus Christ", "Albert Einstein", "Marie Curie", "Nikola Tesla", "Isaac Newton", "Stephen Hawking", "Katherine Johnson", "Xi Jinping", "Scarlett Johansson", "Emma Stone", "Zendaya", "Margot Robbie", "Rihanna", "Sydney Sweeney", "Sadhguru", "Joe Rogan", "Kanye West", "Dave Chappelle", "Yann LeCun", "Geoffrey Hinton", "Seth Godin", "Bozoma Saint John", "Gary Vaynerchuk", "Philip Kotler", "Eliezer Yudkowsky", "Nate Soares", "Jan Leike"), 'panel_description' (a description of the character's action and the background scene for that panel), and 'dialogue' (the exact words for the speech bubble, which can be an empty string).
+PS D:\Gemini\SocialPost> node test_gemini_image.js
+node:internal/modules/package_json_reader:255
+  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+        ^
 
-**IMPORTANT**: The comic strip panels MUST feature the main individuals mentioned in the '{TOPIC}'. You may use other characters from the library for supporting roles, but the central figures of the topic must be the focus of the story.
-
-Do not invent new character keys. Your response must be a valid JSON object.
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@google/genai' imported from D:\Gemini\SocialPost\src\lib\image-generators\gemini-provider.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:255:9)
+    at packageResolve (node:internal/modules/esm/resolve:767:81)
+    at moduleResolve (node:internal/modules/esm/resolve:853:18)
+    at defaultResolve (node:internal/modules/esm/resolve:983:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:799:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:723:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:706:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:307:38)
+    at #link (node:internal/modules/esm/module_job:170:49) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}

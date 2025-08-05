@@ -12,6 +12,7 @@
 *.json
 # ...except for these specific configuration files.
 !config.json
+!character_library.json
 !package.json
 !package-lock.json
 !schedule_x.json

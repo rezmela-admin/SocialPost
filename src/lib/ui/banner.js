@@ -29,7 +29,7 @@ export function displayBanner() {
         '  ╚═════╝  ╚═════╝    ╚═╝   '
     ];
 
-    const subtitle = `Automated Content Generation & Posting | v${version}`;
+    const subtitle = `Automated Content Generation & Posting on X, LinkedIn, Bluesky | v${version}`;
 
     // Determine the inner width of the box based on the longest line of content.
     const bannerWidth = cartoonBanner[0].length + botBanner[0].length;
