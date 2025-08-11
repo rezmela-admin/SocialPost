@@ -21,16 +21,19 @@
 # Allow prompt profiles to be tracked
 !/prompt_profiles/*.json
 
-# Temporary & Generated Files
+# Logs, Temporary & Generated Files
+*.log
+*.tmp
+*.swp
+*~
+*.patch
+Error.txt
 /daily_cartoon.png
 /temp_source_for_python.png
 /placeholder.png
 /test_image.png
 /test_mask.png
-*.log
-*.tmp
-*.swp
-*~
+temp_panel_*.png
 
 # OS-specific
 .DS_Store
@@ -41,10 +44,5 @@ Thumbs.db
 .idea/
 *.code-workspace
 /_dev_archive/
-/backups/Error.txt
-Error.txt
-backups/
-plans/
-Error.txt
-Error.txt
-temp_panel_0.png
+/backups/
+/plans/
