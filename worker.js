@@ -65,66 +65,71 @@ async function postToBluesky(job, config) {
 }
 
 // --- Generic Posting Logic ---
-async function postToPlatform(page, job, platformConfig) {
+async function postToPlatform(page, job, platformConfig, timeouts) {
     const absoluteImagePath = path.join(process.cwd(), job.imagePath);
     const { summary, imagePath } = job;
     const { composeUrl, selectors } = platformConfig;
 
     console.log(`[WORKER-INFO] Navigating to compose URL: ${composeUrl}`);
-    await page.goto(composeUrl);
+    await page.goto(composeUrl, { timeout: timeouts.pageLoad });
 
     // Optional: Click a button to start a post if necessary (e.g., LinkedIn)
     if (selectors.startPostButton) {
         console.log("[WORKER-INFO] Clicking 'Start a post' button...");
-        await page.locator(selectors.startPostButton).click();
+        await page.locator(selectors.startPostButton).click({ timeout: timeouts.selector });
     }
 
     // Uploading the image
     console.log("[WORKER-INFO] Preparing to upload image...");
     if (selectors.fileInput) {
         // Direct file input (e.g., X)
-        await page.waitForSelector(selectors.fileInput, { state: 'attached', timeout: 60000 });
+        await page.waitForSelector(selectors.fileInput, { state: 'attached', timeout: timeouts.selector });
         // Use the generic selector for X, as it's more reliable.
         if (platformConfig.composeUrl.includes('x.com')) {
-            await page.setInputFiles('input[type="file"]', absoluteImagePath);
+            await page.setInputFiles('input[type="file"]', absoluteImagePath, { timeout: timeouts.selector });
         } else {
-            await page.locator(selectors.fileInput).setInputFiles(absoluteImagePath);
+            await page.locator(selectors.fileInput).setInputFiles(absoluteImagePath, { timeout: timeouts.selector });
         }
     } else if (selectors.addMediaButton) {
         // File chooser dialog (e.g., LinkedIn)
-        const fileChooserPromise = page.waitForEvent('filechooser');
-        await page.locator(selectors.addMediaButton).click();
+        const fileChooserPromise = page.waitForEvent('filechooser', { timeout: timeouts.selector });
+        await page.locator(selectors.addMediaButton).click({ timeout: timeouts.selector });
         const fileChooser = await fileChooserPromise;
         await fileChooser.setFiles(absoluteImagePath);
     }
      if (selectors.imagePreview) {
         console.log("[WORKER-INFO] Waiting for image to be processed...");
-        await page.waitForSelector(selectors.imagePreview, { state: 'visible', timeout: 60000 });
+        await page.waitForSelector(selectors.imagePreview, { state: 'visible', timeout: timeouts.selector });
     }
 
     // Optional: Click a 'Next' button after upload if necessary
     if (selectors.nextButton) {
         console.log("[WORKER-INFO] Clicking 'Next' after image upload...");
-        await page.locator(selectors.nextButton).click();
+        await page.locator(selectors.nextButton).click({ timeout: timeouts.selector });
     }
 
     // Writing the post text
     console.log("[WORKER-INFO] Writing post text...");
     const postTextBox = page.locator(selectors.textBox);
-    await postTextBox.waitFor({ state: 'visible', timeout: 10000 });
+    await postTextBox.waitFor({ state: 'visible', timeout: timeouts.textBoxVisible });
+
+    // --- [NEW] Dynamic Timeout Logic ---
+    const typingTimeout = timeouts.typing.base + (summary.length * timeouts.typing.perChar);
+    const typingDelay = timeouts.typing.delay;
+    console.log(`[WORKER-INFO] Typing summary of ${summary.length} chars. Using delay: ${typingDelay}ms, timeout: ${typingTimeout}ms.`);
 
     // Use the robust 'getByRole' for X, but the standard selector for others.
     if (platformConfig.composeUrl.includes('x.com')) {
         // Using .type() with a delay to simulate human typing and avoid race conditions with hashtag popups.
-        await page.getByRole('textbox', { name: 'Post text' }).type(summary, { delay: 100 });
+        await page.getByRole('textbox', { name: 'Post text' }).type(summary, { delay: typingDelay, timeout: typingTimeout });
     } else {
         // Using .type() with a delay for other platforms as well for robustness.
-        await postTextBox.type(summary, { delay: 100 });
+        await postTextBox.type(summary, { delay: typingDelay, timeout: typingTimeout });
     }
 
     // Clicking the final post button
     console.log("[WORKER-INFO] Clicking final post button...");
-    await page.locator(selectors.postButton).click({ timeout: 60000 });
+    await page.locator(selectors.postButton).click({ timeout: timeouts.postButton });
 
     // --- [REVISED] Confirmation Logic ---
     // The confirmation method is now driven by the selectors available in the config.
@@ -133,17 +138,17 @@ async function postToPlatform(page, job, platformConfig) {
     // For X, wait for navigation to home timeline as a primary confirmation
     if (platformConfig.homeUrl && platformConfig.composeUrl.includes('x.com')) {
         console.log(`[WORKER-INFO] Waiting for navigation to home timeline (${platformConfig.homeUrl})...`);
-        await page.waitForURL(platformConfig.homeUrl, { timeout: 60000 });
+        await page.waitForURL(platformConfig.homeUrl, { timeout: timeouts.confirmation });
     }
 
     if (selectors.confirmationLocator) {
         // Method 1: Wait for a specific confirmation element to be visible.
-        await page.locator(selectors.confirmationLocator).waitFor({ state: 'visible', timeout: 60000 });
+        await page.locator(selectors.confirmationLocator).waitFor({ state: 'visible', timeout: timeouts.confirmation });
         console.log("[WORKER-SUCCESS] Confirmation element is visible.");
 
     } else if (selectors.composeModal) {
         // Method 2: Wait for the compose modal to disappear.
-        await page.locator(selectors.composeModal).waitFor({ state: 'hidden', timeout: 60000 });
+        await page.locator(selectors.composeModal).waitFor({ state: 'hidden', timeout: timeouts.confirmation });
         console.log("[WORKER-SUCCESS] Compose modal has disappeared.");
 
     } else {
@@ -187,13 +192,16 @@ async function processJob(job, config) {
                     if (!platformConfig || !platformConfig.selectors) {
                         throw new Error(`Configuration for platform "${platformName}" is missing or incomplete.`);
                     }
+                    if (!config.timeouts) {
+                        throw new Error(`'timeouts' configuration is missing from config.json.`);
+                    }
                     if (!fs.existsSync(sessionFilePath)) {
                         throw new Error(`Session file for ${platformName} not found. Please log in first.`);
                     }
                     browser = await chromium.launch({ headless: false });
                     const context = await browser.newContext({ storageState: sessionFilePath });
                     const page = await context.newPage();
-                    await postToPlatform(page, job, platformConfig);
+                    await postToPlatform(page, job, platformConfig, config.timeouts);
                 } finally {
                     if (browser) await browser.close();
                 }

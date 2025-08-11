@@ -31,6 +31,11 @@ export function getPendingJobCount() {
     return queue.filter(j => j.status === 'pending').length;
 }
 
+export function getAnyJobCount() {
+    const queue = readQueue();
+    return queue.length;
+}
+
 export function addJob(jobDetails) {
     const queue = readQueue();
     const newJob = {

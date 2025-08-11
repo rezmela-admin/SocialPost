@@ -29,6 +29,18 @@
       "serviceUrl": "https://bsky.social"
     }
   },
+  "timeouts": {
+    "pageLoad": 60000,
+    "selector": 60000,
+    "textBoxVisible": 10000,
+    "postButton": 60000,
+    "confirmation": 60000,
+    "typing": {
+      "base": 5000,
+      "perChar": 150,
+      "delay": 100
+    }
+  },
   "search": {
     "defaultTopic": "Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism prefer short, private exercise sessions."
   },

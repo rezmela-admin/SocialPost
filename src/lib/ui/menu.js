@@ -4,7 +4,7 @@ import fs from 'fs';
 import chalk from 'chalk';
 import { spawn } from 'child_process';
 import { manageCreativeProfiles } from '../profile-manager.js';
-import { getPendingJobCount, clearQueue } from '../queue-manager.js';
+import { getPendingJobCount, getAnyJobCount, clearQueue } from '../queue-manager.js';
 import { generateAndQueueComicStrip, generateAndQueuePost, generateVirtualInfluencerPost } from '../workflows.js';
 import { displayBanner } from './banner.js';
 
@@ -41,6 +41,9 @@ export async function mainMenu(config, imageGenerator) {
         const activeProfile = config.prompt.profilePath ? path.basename(config.prompt.profilePath, '.json') : '<None Selected>';
         const loggedInPlatforms = getLoggedInPlatforms();
         const pendingJobs = getPendingJobCount();
+        const anyJobs = getAnyJobCount();
+        const hasOrphanedImages = fs.readdirSync(process.cwd()).some(f => f.startsWith('post-image-') || f.startsWith('comic-strip-'));
+
 
         console.log(chalk.yellow('\n--- Status ---'));
         console.log(`- Active Profile: ${chalk.cyan(activeProfile)}`);
@@ -55,9 +58,12 @@ export async function mainMenu(config, imageGenerator) {
             new inquirer.Separator(),
             'Quit'
         ];
+
         if (pendingJobs > 0) {
             choices.splice(1, 0, `Process Job Queue (${pendingJobs} pending)`);
-            choices.splice(2, 0, 'Clear Job Queue & Cleanup Files');
+        }
+        if (anyJobs > 0 || hasOrphanedImages) {
+            choices.splice(pendingJobs > 0 ? 2 : 1, 0, 'Clear Job Queue & Cleanup Files');
         }
 
         const { action } = await inquirer.prompt([{ type: 'list', name: 'action', message: message, choices: choices }]);
