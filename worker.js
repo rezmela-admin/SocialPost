@@ -115,9 +115,11 @@ async function postToPlatform(page, job, platformConfig) {
 
     // Use the robust 'getByRole' for X, but the standard selector for others.
     if (platformConfig.composeUrl.includes('x.com')) {
-        await page.getByRole('textbox', { name: 'Post text' }).fill(summary);
+        // Using .type() with a delay to simulate human typing and avoid race conditions with hashtag popups.
+        await page.getByRole('textbox', { name: 'Post text' }).type(summary, { delay: 100 });
     } else {
-        await postTextBox.fill(summary);
+        // Using .type() with a delay for other platforms as well for robustness.
+        await postTextBox.type(summary, { delay: 100 });
     }
 
     // Clicking the final post button

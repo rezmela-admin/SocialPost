@@ -1,7 +1,9 @@
 import OpenAI from 'openai';
 import fs from 'fs';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Note: The OpenAI client is now initialized inside the generateImage function.
+// This ensures it only gets created when needed and after API keys are loaded.
+let openai; 
 
 function debugLog(message) {
     // A simple logger. In a real app, this would be more robust.
@@ -100,7 +102,12 @@ async function openaiRequestWithRetry(apiCall) {
  */
 export async function generateImage(prompt, options) {
     if (!process.env.OPENAI_API_KEY) {
-        throw new Error("[OPENAI-PROVIDER-FATAL] OpenAI API key is not configured. Please check your .env file.");
+        throw new Error("[OPENAI-PROVIDER-FATAL] OpenAI API key is not configured. Please check your .env file or .gemini/settings.json.");
+    }
+
+    // Initialize the client here, now that we know the key is present.
+    if (!openai) {
+        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     }
 
     const imageRequest = buildImageRequest(prompt, options.size, options);

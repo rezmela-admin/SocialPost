@@ -1,6 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from 'fs';
 
+// Note: The GoogleGenAI client is now initialized inside the generateImage function.
+let ai;
+
 function debugLog(message) {
     try {
         const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
@@ -14,10 +17,13 @@ function debugLog(message) {
 
 export async function generateImage(prompt, options) {
     if (!process.env.GEMINI_API_KEY) {
-        throw new Error("[GEMINI-PROVIDER-FATAL] Gemini API key is not configured. Please check your .env file.");
+        throw new Error("[GEMINI-PROVIDER-FATAL] Gemini API key is not configured. Please check your .env file or .gemini/settings.json.");
     }
 
-    const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
+    // Initialize the client here, now that we know the key is present.
+    if (!ai) {
+        ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
+    }
 
     debugLog(`Gemini SDK Request: Model=${options.model}, Prompt="${prompt}"`);
 

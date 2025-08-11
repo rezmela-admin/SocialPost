@@ -44,7 +44,7 @@
     "imageFileName": "daily_cartoon.png"
   },
   "textGeneration": {
-    "provider": "deepseek",
+    "provider": "gemini",
     "providers": {
       "gemini": {
         "model": "gemini-2.5-flash",
