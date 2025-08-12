@@ -56,15 +56,34 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         }
 
         let parsedResult;
+        let geminiRawOutput; // Declare here to be available in the catch block
         try {
             console.log(`[APP-INFO] Attempting to generate valid comic panels...`);
-            debugLog(config, `Gemini Comic Strip Prompt:\n${taskPrompt}`);
-            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
-            const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+            debugLog(config, `Gemini Comic Strip Prompt:
+${taskPrompt}`);
+            geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
+
+            // Find the start and end of the JSON markdown block
+            const jsonStartIndex = geminiRawOutput.indexOf('```json\n{');
+            const jsonEndIndex = geminiRawOutput.lastIndexOf('}\n```');
+
+            if (jsonStartIndex === -1 || jsonEndIndex === -1) {
+                 throw new Error("No valid JSON markdown block found in the AI's response.");
+            }
+
+            // Extract the JSON string from the markdown block
+            const jsonString = geminiRawOutput.substring(jsonStartIndex + 8, jsonEndIndex + 1);
+            
+            // Attempt to parse the extracted string
             parsedResult = JSON.parse(jsonString);
             console.log('[APP-SUCCESS] Successfully generated comic panels from AI.');
         } catch (e) {
             console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI. Aborting.`, e);
+            // Log the problematic output for debugging
+            if (geminiRawOutput) {
+                debugLog(config, `Problematic AI Output:
+${geminiRawOutput}`);
+            }
             return { success: false };
         }
 
@@ -92,26 +111,23 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
             const characterDetails = panel.characters.map(charName => {
                 const characterData = characterLibrary[charName];
                 const description = characterData || `A depiction of ${charName}`;
-                return { name: charName, description, dialog: panel.dialog }; 
+                return { name: charName, description };
             });
 
-            debugLog(config, `Panel ${i+1} character details: ${JSON.stringify(characterDetails, null, 2)}`);
+            debugLog(config, `Panel ${i + 1} character details: ${JSON.stringify(characterDetails, null, 2)}`);
 
             let promptParts = [
                 `${selectedStyle.prompt}`,
-                `${panel.panel_description || panel.description}.`
+                `Panel ${i + 1}: ${panel.panel_description || panel.description}.`
             ];
 
             characterDetails.forEach(char => {
-                promptParts.push(`Character ${char.name}: ${char.description}.`);
+                promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
             });
-            
+
             if (panel.dialog && panel.dialog.trim() !== '') {
-                 promptParts.push(`A speech bubble clearly says: "${panel.dialog}".`);
+                promptParts.push(`A speech bubble MUST clearly and fully contain the text: "${panel.dialog}". The bubble and text must not be cut off.`);
             }
-            
-            promptParts.push('The speech bubble must be positioned so it is fully visible and not cut off by the edges of the image.');
-            promptParts.push('with a 5% margin of empty space around the entire image to act as a safe zone.');
 
             let panelPrompt = promptParts.join(' ');
 
@@ -125,14 +141,23 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         console.log('[APP-INFO] All panels generated. Composing final comic strip...');
         const finalImagePath = path.join(process.cwd(), `comic-strip-${Date.now()}.png`);
         const [width, height] = config.imageGeneration.size.split('x').map(Number);
+        const borderSize = config.imageGeneration.comicBorderSize || 10; // Default to 10px if not set
+
+        const finalWidth = (width * 2) + (borderSize * 3);
+        const finalHeight = (height * 2) + (borderSize * 3);
 
         await sharp({
-            create: { width: width * 2, height: height * 2, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
+            create: {
+                width: finalWidth,
+                height: finalHeight,
+                channels: 4,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            }
         }).composite([
-            { input: panelImagePaths[0], top: 0, left: 0 },
-            { input: panelImagePaths[1], top: 0, left: width },
-            { input: panelImagePaths[2], top: height, left: 0 },
-            { input: panelImagePaths[3], top: height, left: width }
+            { input: panelImagePaths[0], top: borderSize, left: borderSize },
+            { input: panelImagePaths[1], top: borderSize, left: width + (borderSize * 2) },
+            { input: panelImagePaths[2], top: height + (borderSize * 2), left: borderSize },
+            { input: panelImagePaths[3], top: height + (borderSize * 2), left: width + (borderSize * 2) }
         ]).png().toFile(finalImagePath);
 
         console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
