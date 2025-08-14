@@ -1,6 +1,25 @@
 import fs from 'fs';
+import path from 'path';
 import inquirer from 'inquirer';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
+
+export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }) {
+    let taskPrompt = activeProfile.task.replace('{TOPIC}', topic);
+
+    if (narrativeFrameworkPath) {
+        try {
+            const framework = JSON.parse(fs.readFileSync(narrativeFrameworkPath, 'utf8'));
+            if (framework.template) {
+                taskPrompt = `${framework.template}\n\n${taskPrompt}`;
+            }
+        } catch (error) {
+            console.error(`[APP-WARN] Could not read or parse framework file: ${narrativeFrameworkPath}`, error);
+        }
+    }
+        
+    return taskPrompt;
+}
+
 
 export function debugLog(config, message) {
     if (config.debug && config.debug.enabled) {

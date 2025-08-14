@@ -4,7 +4,7 @@ import inquirer from 'inquirer';
 import { execSync } from 'child_process';
 import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
-import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble } from './utils.js';
+import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt } from './utils.js';
 import { addJob } from './queue-manager.js';
 
 async function generateImageWithRetry(imageGenerator, initialPrompt, config, textGenerator, maxRetries = 3) {
@@ -34,7 +34,7 @@ async function generateImageWithRetry(imageGenerator, initialPrompt, config, tex
     throw lastError;
 }
 
-export async function generateAndQueueComicStrip(postDetails, config, imageGenerator) {
+export async function generateAndQueueComicStrip(postDetails, config, imageGenerator, narrativeFrameworkPath) {
     debugLog(config, "Entered generateAndQueueComicStrip function.");
     const activeProfilePath = config.prompt.profilePath;
     if (!activeProfilePath || !fs.existsSync(activeProfilePath)) {
@@ -49,7 +49,12 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         const characterLibrary = JSON.parse(fs.readFileSync('./character_library.json', 'utf8'));
         const hasCharacterLibrary = !!(characterLibrary && Object.keys(characterLibrary).length > 0);
 
-        let taskPrompt = activeProfile.task.replace('{TOPIC}', postDetails.topic);
+        let taskPrompt = buildTaskPrompt({
+            activeProfile,
+            narrativeFrameworkPath,
+            topic: postDetails.topic
+        });
+
         if (hasCharacterLibrary) {
             const characterKeys = Object.keys(characterLibrary).map(key => `"${key}"`).join(', ');
             taskPrompt = taskPrompt.replace('{CHARACTER_KEYS}', characterKeys);
@@ -63,17 +68,20 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
 ${taskPrompt}`);
             geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
 
-            // Find the start and end of the JSON markdown block
-            const jsonStartIndex = geminiRawOutput.indexOf('```json\n{');
-            const jsonEndIndex = geminiRawOutput.lastIndexOf('}\n```');
+            // Use a regular expression to find the JSON block, which is more robust.
+            const jsonRegex = /```json\s*([\s\S]*?)\s*```/;
+            const match = geminiRawOutput.match(jsonRegex);
 
-            if (jsonStartIndex === -1 || jsonEndIndex === -1) {
-                 throw new Error("No valid JSON markdown block found in the AI's response.");
+            if (!match || !match[1]) {
+                throw new Error("No valid JSON markdown block found in the AI's response.");
             }
 
-            // Extract the JSON string from the markdown block
-            const jsonString = geminiRawOutput.substring(jsonStartIndex + 8, jsonEndIndex + 1);
+            // Extract and clean the JSON string.
+            let jsonString = match[1].trim();
             
+            // Sanitize the JSON string to remove trailing commas
+            jsonString = jsonString.replace(/,\s*([}\]])/g, '$1');
+
             // Attempt to parse the extracted string
             parsedResult = JSON.parse(jsonString);
             console.log('[APP-SUCCESS] Successfully generated comic panels from AI.');
@@ -108,10 +116,12 @@ ${geminiRawOutput}`);
             console.log(`[APP-INFO] Generating panel ${i + 1} of 4...`);
             const panel = panels[i];
 
-            const characterDetails = panel.characters.map(charName => {
-                const characterData = characterLibrary[charName];
-                const description = characterData || `A depiction of ${charName}`;
-                return { name: charName, description };
+            const characterDetails = panel.characters.map(charObj => {
+                // The AI now provides a description directly in the panel data.
+                // We prioritize that, but can fall back to the library if needed.
+                const libraryData = characterLibrary[charObj.name] || {};
+                const description = charObj.description || libraryData.description || `A depiction of ${charObj.name}`;
+                return { name: charObj.name, description: description };
             });
 
             debugLog(config, `Panel ${i + 1} character details: ${JSON.stringify(characterDetails, null, 2)}`);
@@ -125,8 +135,9 @@ ${geminiRawOutput}`);
                 promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
             });
 
-            if (panel.dialog && panel.dialog.trim() !== '') {
-                promptParts.push(`A speech bubble MUST clearly and fully contain the text: "${panel.dialog}". The bubble and text must not be cut off.`);
+            if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
+                const dialogueText = panel.dialogue.map(d => `${d.character} says: "${d.speech}"`).join(' ');
+                promptParts.push(`The panel must contain speech bubbles for the following dialogue: ${dialogueText}. The bubbles and text must be clear, fully visible, and not cut off.`);
             }
 
             let panelPrompt = promptParts.join(' ');
@@ -179,7 +190,7 @@ ${geminiRawOutput}`);
     }
 }
 
-export async function generateAndQueuePost(postDetails, config, imageGenerator, skipSummarization = false) {
+export async function generateAndQueuePost(postDetails, config, imageGenerator, skipSummarization = false, narrativeFrameworkPath) {
     const textGenerator = getTextGenerator(config);
     try {
         console.log(`\n[APP-INFO] Generating content for topic: "${postDetails.topic}"`);
@@ -188,11 +199,21 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
         let summary, finalImagePrompt, parsedResult = {};
 
         if (!skipSummarization) {
-            const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
+            const activeProfile = JSON.parse(fs.readFileSync(config.prompt.profilePath, 'utf8'));
+            const taskPrompt = buildTaskPrompt({
+                activeProfile,
+                narrativeFrameworkPath,
+                topic: postDetails.topic
+            });
             const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
             if (geminiRawOutput) {
                 try {
-                    const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+                    const jsonRegex = /```json\s*([\s\S]*?)\s*```|({[\s\S]*})/;
+                    const match = geminiRawOutput.match(jsonRegex);
+                    if (!match || !match[1] && !match[2]) {
+                        throw new Error("No valid JSON block found in the AI's response.");
+                    }
+                    const jsonString = (match[1] || match[2]).trim();
                     parsedResult = JSON.parse(jsonString);
                 } catch (e) {
                     console.error("[APP-ERROR] Failed to parse JSON from Gemini response.", e);
@@ -246,7 +267,7 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
     }
 }
 
-export async function generateVirtualInfluencerPost(postDetails, config, imageGenerator, skipSummarization = false) {
+export async function generateVirtualInfluencerPost(postDetails, config, imageGenerator, skipSummarization = false, narrativeFrameworkPath) {
      const textGenerator = getTextGenerator(config);
     try {
         console.log(`\n[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "${postDetails.topic}"`);
@@ -255,10 +276,20 @@ export async function generateVirtualInfluencerPost(postDetails, config, imageGe
         let summary, dialogue, backgroundPrompt, parsedResult = {};
 
         if (!skipSummarization) {
-            const taskPrompt = config.prompt.task.replace('{TOPIC}', postDetails.topic);
+            const activeProfile = JSON.parse(fs.readFileSync(config.prompt.profilePath, 'utf8'));
+            const taskPrompt = buildTaskPrompt({
+                activeProfile,
+                narrativeFrameworkPath,
+                topic: postDetails.topic
+            });
             const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
             try {
-                const jsonString = geminiRawOutput.substring(geminiRawOutput.indexOf('{'), geminiRawOutput.lastIndexOf('}') + 1).replace(/,\s*([}\]])/g, '$1');
+                const jsonRegex = /```json\s*([\s\S]*?)\s*```|({[\s\S]*})/;
+                const match = geminiRawOutput.match(jsonRegex);
+                if (!match || !match[1] && !match[2]) {
+                    throw new Error("No valid JSON block found in the AI's response.");
+                }
+                const jsonString = (match[1] || match[2]).trim();
                 parsedResult = JSON.parse(jsonString);
                 ({ summary, dialogue, backgroundPrompt } = parsedResult);
             } catch (e) {
