@@ -4,7 +4,7 @@ import inquirer from 'inquirer';
 import { execSync } from 'child_process';
 import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
-import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt } from './utils.js';
+import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson } from './utils.js';
 import { addJob } from './queue-manager.js';
 
 async function generateImageWithRetry(imageGenerator, initialPrompt, config, textGenerator, maxRetries = 3) {
@@ -67,24 +67,8 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
             debugLog(config, `Gemini Comic Strip Prompt:
 ${taskPrompt}`);
             geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
-
-            // Use a regular expression to find the JSON block, which is more robust.
-            const jsonRegex = /```json\s*([\s\S]*?)\s*```/;
-            const match = geminiRawOutput.match(jsonRegex);
-
-            if (!match || !match[1]) {
-                throw new Error("No valid JSON markdown block found in the AI's response.");
-            }
-
-            // Extract and clean the JSON string.
-            let jsonString = match[1].trim();
-            
-            // Sanitize the JSON string to remove trailing commas
-            jsonString = jsonString.replace(/,\s*([}\]])/g, '$1');
-
-            // Attempt to parse the extracted string
-            parsedResult = JSON.parse(jsonString);
-            console.log('[APP-SUCCESS] Successfully generated comic panels from AI.');
+            parsedResult = sanitizeAndParseJson(geminiRawOutput);
+            console.log('[APP-SUCCESS] Successfully generated and sanitized comic panels from AI.');
         } catch (e) {
             console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI. Aborting.`, e);
             // Log the problematic output for debugging
@@ -208,13 +192,7 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
             const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
             if (geminiRawOutput) {
                 try {
-                    const jsonRegex = /```json\s*([\s\S]*?)\s*```|({[\s\S]*})/;
-                    const match = geminiRawOutput.match(jsonRegex);
-                    if (!match || !match[1] && !match[2]) {
-                        throw new Error("No valid JSON block found in the AI's response.");
-                    }
-                    const jsonString = (match[1] || match[2]).trim();
-                    parsedResult = JSON.parse(jsonString);
+                    parsedResult = sanitizeAndParseJson(geminiRawOutput);
                 } catch (e) {
                     console.error("[APP-ERROR] Failed to parse JSON from Gemini response.", e);
                     parsedResult = { summary: 'Error: Could not parse AI response', imagePrompt: 'A confused robot looking at a computer screen with an error message.' };
@@ -284,13 +262,7 @@ export async function generateVirtualInfluencerPost(postDetails, config, imageGe
             });
             const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
             try {
-                const jsonRegex = /```json\s*([\s\S]*?)\s*```|({[\s\S]*})/;
-                const match = geminiRawOutput.match(jsonRegex);
-                if (!match || !match[1] && !match[2]) {
-                    throw new Error("No valid JSON block found in the AI's response.");
-                }
-                const jsonString = (match[1] || match[2]).trim();
-                parsedResult = JSON.parse(jsonString);
+                parsedResult = sanitizeAndParseJson(geminiRawOutput);
                 ({ summary, dialogue, backgroundPrompt } = parsedResult);
             } catch (e) {
                 console.error("[APP-ERROR] Failed to parse JSON from Gemini response.", e);

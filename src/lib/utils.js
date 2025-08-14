@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import inquirer from 'inquirer';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
+import { jsonrepair } from 'jsonrepair';
 
 export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }) {
     let taskPrompt = activeProfile.task.replace('{TOPIC}', topic);
@@ -112,3 +113,34 @@ export async function selectGraphicStyle() {
         return null;
     }
 }
+
+export function sanitizeAndParseJson(rawOutput) {
+    // Use a regular expression to find the JSON block, which is more robust.
+    const jsonRegex = /```json\s*([\s\S]*?)\s*```/;
+    const match = rawOutput.match(jsonRegex);
+
+    if (!match || !match[1]) {
+        // Fallback for cases where the AI might not use markdown
+        try {
+            const repaired = jsonrepair(rawOutput);
+            return JSON.parse(repaired);
+        } catch (e) {
+            throw new Error("No valid JSON markdown block found and could not repair the raw output.");
+        }
+    }
+
+    // Extract the JSON string.
+    let jsonString = match[1].trim();
+
+    try {
+        const repaired = jsonrepair(jsonString);
+        return JSON.parse(repaired);
+    } catch (e) {
+        // If parsing still fails, log the sanitized string for debugging.
+        debugLog({ debug: { enabled: true } }, `Repaired JSON that failed to parse:
+${jsonString}`);
+        // Re-throw the original error to be caught by the calling function.
+        throw e;
+    }
+}
+
