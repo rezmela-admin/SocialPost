@@ -4,35 +4,8 @@ import inquirer from 'inquirer';
 import { execSync } from 'child_process';
 import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
-import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson } from './utils.js';
+import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson, getPanelApproval, generateImageWithRetry } from './utils.js';
 import { addJob } from './queue-manager.js';
-
-async function generateImageWithRetry(imageGenerator, initialPrompt, config, textGenerator, maxRetries = 3) {
-    let lastError = null;
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            let currentPrompt = initialPrompt;
-            if (i > 0) {
-                console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating prompt after safety rejection...`);
-                const regenPrompt = `The previous cartoon prompt was rejected by the image generation safety system. Please generate a new, alternative prompt for a political cartoon about the same topic that is less likely to be rejected. The original prompt was: "${initialPrompt}"`;
-                currentPrompt = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
-                console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
-            }
-            const imageB64 = await imageGenerator(currentPrompt, config.imageGeneration);
-            return imageB64;
-        } catch (error) {
-            lastError = error;
-            if (error.message && error.message.toLowerCase().includes('safety')) {
-                console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            } else {
-                throw error;
-            }
-        }
-    }
-    console.error(`[APP-FATAL] Image generation failed after ${maxRetries} attempts.`);
-    throw lastError;
-}
 
 export async function generateAndQueueComicStrip(postDetails, config, imageGenerator, narrativeFrameworkPath) {
     debugLog(config, "Entered generateAndQueueComicStrip function.");
@@ -97,40 +70,16 @@ ${geminiRawOutput}`);
         }
 
         for (let i = 0; i < panels.length; i++) {
-            console.log(`[APP-INFO] Generating panel ${i + 1} of 4...`);
             const panel = panels[i];
+            const approvedPanelPath = await getPanelApproval(panel, i, imageGenerator, config, textGenerator, selectedStyle, characterLibrary);
 
-            const characterDetails = panel.characters.map(charObj => {
-                // The AI now provides a description directly in the panel data.
-                // We prioritize that, but can fall back to the library if needed.
-                const libraryData = characterLibrary[charObj.name] || {};
-                const description = charObj.description || libraryData.description || `A depiction of ${charObj.name}`;
-                return { name: charObj.name, description: description };
-            });
-
-            debugLog(config, `Panel ${i + 1} character details: ${JSON.stringify(characterDetails, null, 2)}`);
-
-            let promptParts = [
-                `${selectedStyle.prompt}`,
-                `Panel ${i + 1}: ${panel.panel_description || panel.description}.`
-            ];
-
-            characterDetails.forEach(char => {
-                promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
-            });
-
-            if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
-                const dialogueText = panel.dialogue.map(d => `${d.character} says: "${d.speech}"`).join(' ');
-                promptParts.push(`The panel must contain speech bubbles for the following dialogue: ${dialogueText}. The bubbles and text must be clear, fully visible, and not cut off.`);
+            if (!approvedPanelPath) {
+                console.log('[APP-INFO] Comic strip generation cancelled by user.');
+                // Clean up any previously approved panels
+                panelImagePaths.forEach(p => fs.unlinkSync(p));
+                return { success: false, wasCancelled: true };
             }
-
-            let panelPrompt = promptParts.join(' ');
-
-            const imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator);
-            const tempImagePath = path.join(process.cwd(), `temp_panel_${i}.png`);
-            fs.writeFileSync(tempImagePath, Buffer.from(imageB64, 'base64'));
-            panelImagePaths.push(tempImagePath);
-            console.log(`[APP-SUCCESS] Panel ${i + 1} created: ${tempImagePath}`);
+            panelImagePaths.push(approvedPanelPath);
         }
 
         console.log('[APP-INFO] All panels generated. Composing final comic strip...');

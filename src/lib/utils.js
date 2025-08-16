@@ -4,6 +4,96 @@ import inquirer from 'inquirer';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import { jsonrepair } from 'jsonrepair';
 
+export async function generateImageWithRetry(imageGenerator, initialPrompt, config, textGenerator, maxRetries = 3) {
+    let lastError = null;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            let currentPrompt = initialPrompt;
+            if (i > 0) {
+                console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating prompt after safety rejection...`);
+                const regenPrompt = `The previous cartoon prompt was rejected by the image generation safety system. Please generate a new, alternative prompt for a political cartoon about the same topic that is less likely to be rejected. The original prompt was: "${initialPrompt}"`;
+                currentPrompt = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
+                console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
+            }
+            const imageB64 = await imageGenerator(currentPrompt, config.imageGeneration);
+            return imageB64;
+        } catch (error) {
+            lastError = error;
+            if (error.message && error.message.toLowerCase().includes('safety')) {
+                console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            } else {
+                throw error;
+            }
+        }
+    }
+    console.error(`[APP-FATAL] Image generation failed after ${maxRetries} attempts.`);
+    throw lastError;
+}
+
+export async function getPanelApproval(panel, panelIndex, imageGenerator, config, textGenerator, selectedStyle, characterLibrary) {
+    let approvedImagePath = null;
+    let userAction = '';
+
+    do {
+        console.log(`[APP-INFO] Generating panel ${panelIndex + 1} of 4...`);
+
+        const characterDetails = panel.characters.map(charObj => {
+            const libraryData = characterLibrary[charObj.name] || {};
+            const description = charObj.description || libraryData.description || `A depiction of ${charObj.name}`;
+            return { name: charObj.name, description: description };
+        });
+
+        let promptParts = [
+            `${selectedStyle.prompt}`,
+            `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
+        ];
+
+        characterDetails.forEach(char => {
+            promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
+        });
+
+        if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
+            const dialogueText = panel.dialogue.map(d => `${d.character} says: "${d.speech}"`).join(' ');
+            promptParts.push(`The panel must contain speech bubbles for the following dialogue: ${dialogueText}. The bubbles and text must be clear, fully visible, and not cut off.`);
+        }
+
+        let panelPrompt = promptParts.join(' ');
+
+        const imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator);
+        const tempImagePath = path.join(process.cwd(), `temp_panel_for_approval.png`);
+        fs.writeFileSync(tempImagePath, Buffer.from(imageB64, 'base64'));
+        
+        console.log(`[APP-INFO] Panel ${panelIndex + 1} image generated: ${tempImagePath}`);
+        
+        const { action } = await inquirer.prompt([
+            {
+                type: 'list',
+                name: 'action',
+                message: `Panel ${panelIndex + 1} is ready for review. Please open the image and choose an option:`,
+                choices: ['Approve', 'Retry', 'Cancel'],
+            },
+        ]);
+        
+        userAction = action;
+
+        if (userAction === 'Approve') {
+            approvedImagePath = path.join(process.cwd(), `temp_panel_${panelIndex}.png`);
+            fs.renameSync(tempImagePath, approvedImagePath);
+            console.log(`[APP-SUCCESS] Panel ${panelIndex + 1} approved: ${approvedImagePath}`);
+        } else {
+            fs.unlinkSync(tempImagePath); // Clean up the rejected image
+        }
+
+    } while (userAction === 'Retry');
+
+    if (userAction === 'Cancel') {
+        return null;
+    }
+
+    return approvedImagePath;
+}
+
 export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }) {
     let taskPrompt = activeProfile.task.replace('{TOPIC}', topic);
 
