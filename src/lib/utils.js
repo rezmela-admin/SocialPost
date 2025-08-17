@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import inquirer from 'inquirer';
+import open from 'open';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import { jsonrepair } from 'jsonrepair';
 
@@ -66,11 +67,17 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
         
         console.log(`[APP-INFO] Panel ${panelIndex + 1} image generated: ${tempImagePath}`);
         
+        try {
+            await open(tempImagePath);
+        } catch (error) {
+            console.warn(`[APP-WARN] Could not automatically open the image. Please open it manually: ${tempImagePath}`);
+        }
+
         const { action } = await inquirer.prompt([
             {
                 type: 'list',
                 name: 'action',
-                message: `Panel ${panelIndex + 1} is ready for review. Please open the image and choose an option:`,
+                message: `Panel ${panelIndex + 1} should have opened for review. What would you like to do?`,
                 choices: ['Approve', 'Retry', 'Cancel'],
             },
         ]);
