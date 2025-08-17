@@ -17,6 +17,8 @@ This project contains an automated bot for generating and posting content to soc
 - **Advanced Creative Control:** Use creative profiles to switch between different artistic styles and prompt structures.
 - **Batch Processing:** Generate and queue multiple posts from a single high-level theme.
 - **Secure Session Management:** Saves your social media login sessions so you only have to log in once.
+- **Interactive Comic Generation:** A guided workflow for creating 4-panel comic strips. Each panel is generated and presented for user approval (`Approve`/`Retry`/`Cancel`), and the image is opened automatically. This prevents errors and saves time.
+- **Customizable Styles & Narratives:** Fine-tune the output of the AI by editing `graphic_styles.json` and adding new structures to the `narrative_frameworks` directory.
 
 ## Installation
 
