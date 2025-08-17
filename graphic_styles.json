@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Vintage Comic Book",
+    "prompt": "1950s comic book print style: bold black linework, halftone dot-matrix shading, limited flat color palette of primary tones, slightly aged paper texture. No gradients, no modern effects."
+  },
+  {
+    "name": "Photorealistic Digital Painting",
+    "prompt": "High-detail digital painting with realistic lighting, sharp textures, natural color palette, and lifelike rendering of surfaces. Smooth blending; no outlines or stylization."
+  },
+  {
+    "name": "Modern Animated Movie Still",
+    "prompt": "High-quality 3D animated film aesthetic: vibrant saturated colors, soft global illumination, smooth shading, expressive materials, and stylized realism. Clean, cinematic finish."
+  },
+  {
+    "name": "Futuristic Watercolor Dream",
+    "prompt": "Loose watercolor technique on textured cold-press paper: soft wet edges, capillary blooms, diffused pigments. Palette of indigo, teal, magenta, neon cyan accents, warm gray, and paper white. Gentle glowing tones; avoid hard lights, lens flares, or photoreal details."
+  },
+  {
+    "name": "Ornate Stained Glass Fantasy",
+    "prompt": "Intricate stained-glass aesthetic: jewel-tone palette of ruby, sapphire, emerald, amethyst, topaz, and opal white. 5 mm lead cames, uniform black outlines. Shading by colored segments only; highlights as lighter shards. No gradients, bevels, or reflective surfaces."
+  },
+  {
+    "name": "Classic Manga Panel",
+    "prompt": "Black-and-white manga style: crisp G-pen linework (0.3–0.6 mm), hatching at consistent angles, screentones at 20%, 40%, 60% dot densities. Clean, high-contrast finish. No gray airbrush, gradient fills, or photoreal shading."
+  },
+  {
+    "name": "Post-Modern Superhero Art",
+    "prompt": "Mixed-media poster aesthetic: flat CMYK silkscreen layers (up to four colors), torn newsprint textures, rough dry-brush acrylic accents, and abstract typographic blocks with illegible glyphs. Hard-edged graphic shadows. Exclude realism, gradients, depth of field, or photographic elements."
+  },
+  {
+  "name": "Pantheon-Inspired Animation",
+  "prompt": "An animated still in the style of the series Pantheon: serious, mature 2D digital animation with sharp clean lines and realistic human proportions. Muted cyberpunk palette with deep shadows, punctuated by glowing neon highlights. Atmospheric lighting with a futuristic, glitchy digital aesthetic. Backgrounds suggest advanced technology and cybernetic environments."
+}
+]
