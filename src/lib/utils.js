@@ -35,31 +35,34 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
 export async function getPanelApproval(panel, panelIndex, imageGenerator, config, textGenerator, selectedStyle, characterLibrary) {
     let approvedImagePath = null;
     let userAction = '';
+    let panelPrompt = '';
 
     do {
         console.log(`[APP-INFO] Generating panel ${panelIndex + 1} of 4...`);
 
-        const characterDetails = panel.characters.map(charObj => {
-            const libraryData = characterLibrary[charObj.name] || {};
-            const description = charObj.description || libraryData.description || `A depiction of ${charObj.name}`;
-            return { name: charObj.name, description: description };
-        });
+        if (userAction !== 'Edit') {
+            const characterDetails = panel.characters.map(charObj => {
+                const libraryData = characterLibrary[charObj.name] || {};
+                const description = charObj.description || libraryData.description || `A depiction of ${charObj.name}`;
+                return { name: charObj.name, description: description };
+            });
 
-        let promptParts = [
-            `${selectedStyle.prompt}`,
-            `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
-        ];
+            let promptParts = [
+                `${selectedStyle.prompt}`,
+                `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
+            ];
 
-        characterDetails.forEach(char => {
-            promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
-        });
+            characterDetails.forEach(char => {
+                promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
+            });
 
-        if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
-            const dialogueText = panel.dialogue.map(d => `${d.character} says: "${d.speech}"`).join(' ');
-            promptParts.push(`The panel must contain speech bubbles for the following dialogue: ${dialogueText}. The bubbles and text must be clear, fully visible, and not cut off.`);
+            if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
+                const dialogueText = panel.dialogue.map(d => `${d.character} says: "${d.speech}"`).join(' ');
+                promptParts.push(`The panel must contain speech bubbles for the following dialogue: ${dialogueText}. The bubbles and text must be clear, fully visible, and not cut off.`);
+            }
+
+            panelPrompt = promptParts.join(' ');
         }
-
-        let panelPrompt = promptParts.join(' ');
 
         const imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator);
         const tempImagePath = path.join(process.cwd(), `temp_panel_for_approval.png`);
@@ -73,12 +76,13 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             console.warn(`[APP-WARN] Could not automatically open the image. Please open it manually: ${tempImagePath}`);
         }
 
+        process.stdin.resume(); // Add this line to fix the focus issue
         const { action } = await inquirer.prompt([
             {
                 type: 'list',
                 name: 'action',
                 message: `Panel ${panelIndex + 1} should have opened for review. What would you like to do?`,
-                choices: ['Approve', 'Retry', 'Cancel'],
+                choices: ['Approve', 'Retry', 'Edit', 'Cancel'],
             },
         ]);
         
@@ -88,11 +92,21 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             approvedImagePath = path.join(process.cwd(), `temp_panel_${panelIndex}.png`);
             fs.renameSync(tempImagePath, approvedImagePath);
             console.log(`[APP-SUCCESS] Panel ${panelIndex + 1} approved: ${approvedImagePath}`);
+        } else if (userAction === 'Edit') {
+            const { editedPrompt } = await inquirer.prompt([
+                {
+                    type: 'editor',
+                    name: 'editedPrompt',
+                    message: 'Edit the prompt for this panel:',
+                    default: panelPrompt,
+                },
+            ]);
+            panelPrompt = editedPrompt;
         } else {
             fs.unlinkSync(tempImagePath); // Clean up the rejected image
         }
 
-    } while (userAction === 'Retry');
+    } while (userAction === 'Retry' || userAction === 'Edit');
 
     if (userAction === 'Cancel') {
         return null;
@@ -114,8 +128,15 @@ export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }
             console.error(`[APP-WARN] Could not read or parse framework file: ${narrativeFrameworkPath}`, error);
         }
     }
+
+    const characterConsistencyInstruction = `
+CRITICAL INSTRUCTION: Before generating the panel details, you must first establish a consistent voice and personality for each character in the story.
+1. For well-known public figures: Use your internal knowledge to accurately model their famous speech patterns, cadence, and vocabulary.
+2. For all other characters (original or lesser-known): You must invent a distinct and consistent persona for them. Define their speaking style, and then adhere strictly to that definition throughout all four panels to ensure continuity.
+This is a mandatory first step. Now, generate the 4-panel comic strip based on the user's topic.
+`;
         
-    return taskPrompt;
+    return `${characterConsistencyInstruction}\n\n${taskPrompt}`;
 }
 
 
@@ -238,6 +259,24 @@ export function sanitizeAndParseJson(rawOutput) {
 ${jsonString}`);
         // Re-throw the original error to be caught by the calling function.
         throw e;
+    }
+}
+
+export async function generateAndParseJsonWithRetry(textGenerator, prompt, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(prompt));
+            const parsedResult = sanitizeAndParseJson(geminiRawOutput);
+            // If parsing is successful, return the result immediately.
+            return parsedResult;
+        } catch (error) {
+            console.warn(`[APP-WARN] Failed to parse JSON on attempt ${i + 1}/${maxRetries}. Retrying...`);
+            // If this was the last attempt, re-throw the error.
+            if (i + 1 === maxRetries) {
+                console.error(`[APP-FATAL] Failed to get a valid JSON response from the AI after ${maxRetries} attempts.`);
+                throw error;
+            }
+        }
     }
 }
 

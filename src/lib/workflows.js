@@ -4,7 +4,7 @@ import inquirer from 'inquirer';
 import { execSync } from 'child_process';
 import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
-import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson, getPanelApproval, generateImageWithRetry } from './utils.js';
+import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson, getPanelApproval, generateImageWithRetry, generateAndParseJsonWithRetry } from './utils.js';
 import { addJob } from './queue-manager.js';
 
 export async function generateAndQueueComicStrip(postDetails, config, imageGenerator, narrativeFrameworkPath) {
@@ -34,21 +34,11 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         }
 
         let parsedResult;
-        let geminiRawOutput; // Declare here to be available in the catch block
         try {
-            console.log(`[APP-INFO] Attempting to generate valid comic panels...`);
-            debugLog(config, `Gemini Comic Strip Prompt:
-${taskPrompt}`);
-            geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
-            parsedResult = sanitizeAndParseJson(geminiRawOutput);
+            parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
             console.log('[APP-SUCCESS] Successfully generated and sanitized comic panels from AI.');
         } catch (e) {
-            console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI. Aborting.`, e);
-            // Log the problematic output for debugging
-            if (geminiRawOutput) {
-                debugLog(config, `Problematic AI Output:
-${geminiRawOutput}`);
-            }
+            console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI after multiple attempts. Aborting.`, e);
             return { success: false };
         }
 
@@ -138,14 +128,11 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
                 narrativeFrameworkPath,
                 topic: postDetails.topic
             });
-            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
-            if (geminiRawOutput) {
-                try {
-                    parsedResult = sanitizeAndParseJson(geminiRawOutput);
-                } catch (e) {
-                    console.error("[APP-ERROR] Failed to parse JSON from Gemini response.", e);
-                    parsedResult = { summary: 'Error: Could not parse AI response', imagePrompt: 'A confused robot looking at a computer screen with an error message.' };
-                }
+            try {
+                parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
+            } catch (e) {
+                console.error("[APP-ERROR] Failed to get a valid response from the AI after multiple attempts.", e);
+                parsedResult = { summary: 'Error: Could not parse AI response', imagePrompt: 'A confused robot looking at a computer screen with an error message.' };
             }
         }
 
@@ -209,12 +196,11 @@ export async function generateVirtualInfluencerPost(postDetails, config, imageGe
                 narrativeFrameworkPath,
                 topic: postDetails.topic
             });
-            const geminiRawOutput = await geminiRequestWithRetry(() => textGenerator.generate(taskPrompt));
             try {
-                parsedResult = sanitizeAndParseJson(geminiRawOutput);
+                parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
                 ({ summary, dialogue, backgroundPrompt } = parsedResult);
             } catch (e) {
-                console.error("[APP-ERROR] Failed to parse JSON from Gemini response.", e);
+                console.error("[APP-ERROR] Failed to get a valid response from the AI after multiple attempts.", e);
                 return { success: false };
             }
         } else {
