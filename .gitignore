@@ -36,6 +36,8 @@ Error.txt
 /test_image.png
 /test_mask.png
 temp_panel_*.png
+*.png
+/plans/
 
 # OS-specific
 .DS_Store
