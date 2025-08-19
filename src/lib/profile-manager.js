@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import inquirer from 'inquirer';
+import { select, input, confirm as confirmPrompt, Separator } from '@inquirer/prompts';
 
 const PROFILES_DIR = './prompt_profiles';
 
@@ -11,14 +11,16 @@ async function loadProfile(config) {
         return config;
     }
 
-    const { profileToLoad } = await inquirer.prompt([
-        {
-            type: 'list',
-            name: 'profileToLoad',
-            message: 'Which profile would you like to load?',
-            choices: [...profiles, new inquirer.Separator(), 'Cancel'],
-        },
-    ]);
+    const choices = [
+        ...profiles.map(p => ({ name: p, value: p })),
+        new Separator(),
+        { name: 'Cancel', value: 'Cancel' }
+    ];
+
+    const profileToLoad = await select({
+        message: 'Which profile would you like to load?',
+        choices: choices,
+    });
 
     if (profileToLoad === 'Cancel') {
         console.log("[APP-INFO] Operation cancelled.");
@@ -45,25 +47,33 @@ async function loadProfile(config) {
 async function createNewProfile(config) {
     console.log("\n--- Create New Profile ---");
 
-    const { filename } = await inquirer.prompt([
-        { type: 'input', name: 'filename', message: 'Enter a filename for the new profile (e.g., "my_style"):', validate: input => input.trim().length > 0 || 'Filename cannot be empty.' },
-    ]);
+    const filename = await input({
+        message: 'Enter a filename for the new profile (e.g., "my_style"):', validate: input => input.trim().length > 0 || 'Filename cannot be empty.'
+    });
 
-    const { newStyle } = await inquirer.prompt([
-        { type: 'input', name: 'newStyle', message: 'Enter the new image style:', default: "A fun, witty, satirical cartoon.", validate: input => input.trim().length > 0 || 'Style cannot be empty.' },
-    ]);
+    const newStyle = await input({
+        message: 'Enter the new image style:',
+        default: "A fun, witty, satirical cartoon.",
+        validate: input => input.trim().length > 0 || 'Style cannot be empty.'
+    });
 
     const profileTypes = {
         "Standard Cartoon": { task: "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object..." },
         "Virtual Influencer": { task: "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object..." },
     };
 
-    const { profileType } = await inquirer.prompt([{ type: 'list', name: 'profileType', message: 'Choose the profile type:', choices: Object.keys(profileTypes) }]);
+    const profileType = await select({
+        message: 'Choose the profile type:',
+        choices: Object.keys(profileTypes).map(p => ({ name: p, value: p }))
+    });
 
     const newProfile = { style: newStyle, task: profileTypes[profileType].task };
 
     if (profileType === "Virtual Influencer") {
-        const { characterDescription } = await inquirer.prompt([{ type: 'input', name: 'characterDescription', message: 'Enter a detailed description of your virtual influencer:', validate: input => input.trim().length > 0 || 'Character description cannot be empty.' }]);
+        const characterDescription = await input({
+            message: 'Enter a detailed description of your virtual influencer:',
+            validate: input => input.trim().length > 0 || 'Character description cannot be empty.'
+        });
         newProfile.characterDescription = characterDescription;
     }
     const profilePath = path.join(PROFILES_DIR, `${filename}.json`);
@@ -74,7 +84,7 @@ async function createNewProfile(config) {
         console.error(`[APP-ERROR] Failed to save profile: "${profilePath}". Error:`, e);
     }
 
-    const { loadNow } = await inquirer.prompt([{ type: 'confirm', name: 'loadNow', message: 'Load this new profile now?', default: true }]);
+    const loadNow = await confirmPrompt({ message: 'Load this new profile now?', default: true });
     if (loadNow) {
         newProfile.profilePath = profilePath;
         config.prompt = newProfile;
@@ -90,14 +100,26 @@ async function deleteProfile() {
         return;
     }
 
-    const { profileToDelete } = await inquirer.prompt([{ type: 'list', name: 'profileToDelete', message: 'Which profile would you like to delete?', choices: [...profiles, new inquirer.Separator(), 'Cancel'] }]);
+    const choices = [
+        ...profiles.map(p => ({ name: p, value: p })),
+        new Separator(),
+        { name: 'Cancel', value: 'Cancel' }
+    ];
+
+    const profileToDelete = await select({
+        message: 'Which profile would you like to delete?',
+        choices: choices
+    });
 
     if (profileToDelete === 'Cancel') {
         console.log("[APP-INFO] Operation cancelled.");
         return;
     }
 
-    const { confirmDelete } = await inquirer.prompt([{ type: 'confirm', name: 'confirmDelete', message: `Are you sure you want to permanently delete "${profileToDelete}"?`, default: false }]);
+    const confirmDelete = await confirmPrompt({
+        message: `Are you sure you want to permanently delete "${profileToDelete}"?`,
+        default: false
+    });
 
     if (confirmDelete) {
         try {
@@ -111,20 +133,19 @@ async function deleteProfile() {
 
 export async function manageCreativeProfiles(config) {
     const activeProfile = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : 'Default';
-    const { action } = await inquirer.prompt([
-        {
-            type: 'list',
-            name: 'action',
-            message: `Creative Profiles Menu (Current: ${activeProfile})`,
-            choices: [
-                'Load a Profile (Switch to a different character/style)',
-                'Create a New Profile (Build a new character/style)',
-                'Delete a Profile',
-                new inquirer.Separator(),
-                'Back to Main Menu',
-            ],
-        },
-    ]);
+    
+    const choices = [
+        { name: 'Load a Profile (Switch to a different character/style)', value: 'Load a Profile (Switch to a different character/style)' },
+        { name: 'Create a New Profile (Build a new character/style)', value: 'Create a New Profile (Build a new character/style)' },
+        { name: 'Delete a Profile', value: 'Delete a Profile' },
+        new Separator(),
+        { name: 'Back to Main Menu', value: 'Back to Main Menu' },
+    ];
+
+    const action = await select({
+        message: `Creative Profiles Menu (Current: ${activeProfile})`,
+        choices: choices,
+    });
 
     switch (action) {
         case 'Load a Profile (Switch to a different character/style)':

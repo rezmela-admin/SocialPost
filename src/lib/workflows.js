@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import inquirer from 'inquirer';
+import { select, editor, confirm as confirmPrompt } from '@inquirer/prompts';
 import { execSync } from 'child_process';
 import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
@@ -205,20 +205,17 @@ export async function generateVirtualInfluencerPost(postDetails, config, imageGe
             }
         } else {
             summary = postDetails.topic;
-            const { approvedDialogue, approvedBackground } = await inquirer.prompt([
-                { type: 'editor', name: 'approvedDialogue', message: 'Enter the dialogue for the speech bubble:', validate: input => input.trim().length > 0 },
-                { type: 'editor', name: 'approvedBackground', message: 'Enter the prompt for the background image:', validate: input => input.trim().length > 0 }
-            ]);
-            dialogue = approvedDialogue;
-            backgroundPrompt = approvedBackground;
+            dialogue = await editor({ message: 'Enter the dialogue for the speech bubble:', validate: input => input.trim().length > 0 });
+            backgroundPrompt = await editor({ message: 'Enter the prompt for the background image:', validate: input => input.trim().length > 0 });
         }
 
         summary = await getApprovedInput(summary, 'summary') || summary;
         dialogue = await getApprovedInput(dialogue, 'dialogue') || dialogue;
         backgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt') || backgroundPrompt;
 
-        const { selectedFraming } = await inquirer.prompt([{ type: 'list', name: 'selectedFraming', message: 'Choose framing:', choices: [...(config.framingOptions || []), 'Custom...'] }]);
-        const framingChoice = selectedFraming === 'Custom...' ? (await inquirer.prompt([{ type: 'editor', name: 'custom', message: 'Enter custom framing:' }])).custom : selectedFraming;
+        const framingChoices = [...(config.framingOptions || []), 'Custom...'].map(c => ({name: c, value: c}));
+        const selectedFraming = await select({ message: 'Choose framing:', choices: framingChoices });
+        const framingChoice = selectedFraming === 'Custom...' ? await editor({ message: 'Enter custom framing:' }) : selectedFraming;
 
         const selectedStyle = await selectGraphicStyle();
         if (!selectedStyle) return { success: false, wasCancelled: true };

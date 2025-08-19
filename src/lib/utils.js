@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import inquirer from 'inquirer';
+import { select, editor, confirm as confirmPrompt, Separator } from '@inquirer/prompts';
 import open from 'open';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import { jsonrepair } from 'jsonrepair';
@@ -41,30 +41,53 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
         console.log(`[APP-INFO] Generating panel ${panelIndex + 1} of 4...`);
 
         if (userAction !== 'Edit') {
-            const characterDetails = panel.characters.map(charObj => {
-                const libraryData = characterLibrary[charObj.name] || {};
-                const description = charObj.description || libraryData.description || `A depiction of ${charObj.name}`;
-                return { name: charObj.name, description: description };
-            });
-
             let promptParts = [
                 `${selectedStyle.prompt}`,
                 `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
             ];
 
-            characterDetails.forEach(char => {
-                promptParts.push(`The character ${char.name} MUST be depicted as: ${char.description}.`);
-            });
+            // New, robust character injection logic with correct priority
+            if (panel.characters && Array.isArray(panel.characters)) {
+                panel.characters.forEach(charObj => {
+                    const characterName = charObj.name;
+                    let finalDescription;
+
+                    if (characterLibrary[characterName]) {
+                        // Priority 1: Use the canonical description from the library.
+                        finalDescription = characterLibrary[characterName];
+                    } else {
+                        // Priority 2: Use the AI's description from the panel script.
+                        finalDescription = charObj.description;
+                        console.warn(`[APP-WARN] Character "${characterName}" not found in character_library.json.`);
+                        
+                        if (!finalDescription) {
+                            // Priority 3: Generate a placeholder if the AI didn't provide one.
+                            finalDescription = `A character named ${characterName}. Their appearance should be plausible and distinct from other characters in the panel.`;
+                            console.log(`[APP-INFO] Using temporary description for "${characterName}": "${finalDescription}"`);
+                        } else {
+                            console.log(`[APP-INFO] Using AI-generated description for new character "${characterName}": "${finalDescription}"`);
+                        }
+                    }
+                    promptParts.push(`The character ${characterName} MUST be depicted as: ${finalDescription}.`);
+                });
+            }
 
             if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
-                const dialogueText = panel.dialogue.map(d => `${d.character} says: "${d.speech}"`).join(' ');
-                promptParts.push(`The panel must contain speech bubbles for the following dialogue: ${dialogueText}. The bubbles and text must be clear, fully visible, and not cut off.`);
+                const dialogueText = panel.dialogue.map(d => `'${d.speech}' (spoken by ${d.character})`).join('; ');
+                promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. The dialogue is: ${dialogueText}. The text must be clear, fully visible, and not cut off.`);
             }
 
             panelPrompt = promptParts.join(' ');
         }
 
-        const imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator);
+        let imageB64;
+        try {
+            imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator);
+        } catch (error) {
+            console.error(`[APP-ERROR] Image generation failed for panel ${panelIndex + 1}. Error: ${error.message}`);
+            userAction = 'Retry'; // Force a retry
+            continue;
+        }
         const tempImagePath = path.join(process.cwd(), `temp_panel_for_approval.png`);
         fs.writeFileSync(tempImagePath, Buffer.from(imageB64, 'base64'));
         
@@ -76,15 +99,16 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             console.warn(`[APP-WARN] Could not automatically open the image. Please open it manually: ${tempImagePath}`);
         }
 
-        process.stdin.resume(); // Add this line to fix the focus issue
-        const { action } = await inquirer.prompt([
-            {
-                type: 'list',
-                name: 'action',
-                message: `Panel ${panelIndex + 1} should have opened for review. What would you like to do?`,
-                choices: ['Approve', 'Retry', 'Edit', 'Cancel'],
-            },
-        ]);
+        process.stdin.resume();
+        const action = await select({
+            message: `Panel ${panelIndex + 1} should have opened for review. What would you like to do?`,
+            choices: [
+                { name: 'Approve', value: 'Approve' },
+                { name: 'Retry', value: 'Retry' },
+                { name: 'Edit', value: 'Edit' },
+                { name: 'Cancel', value: 'Cancel' }
+            ]
+        });
         
         userAction = action;
 
@@ -93,17 +117,13 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             fs.renameSync(tempImagePath, approvedImagePath);
             console.log(`[APP-SUCCESS] Panel ${panelIndex + 1} approved: ${approvedImagePath}`);
         } else if (userAction === 'Edit') {
-            const { editedPrompt } = await inquirer.prompt([
-                {
-                    type: 'editor',
-                    name: 'editedPrompt',
-                    message: 'Edit the prompt for this panel:',
-                    default: panelPrompt,
-                },
-            ]);
+            const editedPrompt = await editor({
+                message: 'Edit the prompt for this panel:',
+                default: panelPrompt,
+            });
             panelPrompt = editedPrompt;
         } else {
-            fs.unlinkSync(tempImagePath); // Clean up the rejected image
+            fs.unlinkSync(tempImagePath);
         }
 
     } while (userAction === 'Retry' || userAction === 'Edit');
@@ -148,43 +168,42 @@ export function debugLog(config, message) {
 
 export async function getApprovedInput(text, inputType) {
     while (true) {
-        const { action } = await inquirer.prompt([
-            { type: 'list', name: 'action', message: `Generated ${inputType}:\n\n"${text}"\n\nApprove or edit?`, choices: ['Approve', 'Edit', 'Cancel'] }
-        ]);
+        const action = await select({
+            message: `Generated ${inputType}:\n\n"${text}"\n\nApprove or edit?`,
+            choices: [
+                { name: 'Approve', value: 'Approve' },
+                { name: 'Edit', value: 'Edit' },
+                { name: 'Cancel', value: 'Cancel' }
+            ]
+        });
 
         if (action === 'Approve') return text;
         if (action === 'Cancel') return null;
         if (action === 'Edit') {
-            const { editedText } = await inquirer.prompt([
-                {
-                    type: 'editor',
-                    name: 'editedText',
-                    message: `Editing ${inputType}. Save and close your editor to continue.`, 
-                    default: text,
-                    validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`, 
-                }
-            ]);
+            const editedText = await editor({
+                message: `Editing ${inputType}. Save and close your editor to continue.`,
+                default: text,
+                validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`,
+            });
             return editedText.trim();
         }
     }
 }
 
 export async function promptForSpeechBubble(initialPrompt, dialogue, isVirtualInfluencer) {
-    const { addSpeechBubble } = await inquirer.prompt([{ type: 'confirm', name: 'addSpeechBubble', message: 'Add a speech bubble?', default: isVirtualInfluencer }]);
+    const addSpeechBubble = await confirmPrompt({ message: 'Add a speech bubble?', default: isVirtualInfluencer });
     if (!addSpeechBubble) return initialPrompt;
     
-    const { speechBubbleText } = await inquirer.prompt([{ 
-        type: 'editor',
-        name: 'speechBubbleText',
+    const speechBubbleText = await editor({
         message: 'Enter speech bubble text:',
         default: dialogue,
         validate: input => input.trim().length > 0 || 'Speech bubble text cannot be empty.'
-    }]);
+    });
     
     if (isVirtualInfluencer) {
-        return `${initialPrompt} The character has a speech bubble that clearly says: "${speechBubbleText}".`;
+        return `${initialPrompt} A rectangular dialogue box near the character contains the text: "${speechBubbleText}".`;
     } else {
-        return `${initialPrompt}, with a speech bubble that clearly says: "${speechBubbleText}".`;
+        return `${initialPrompt}, with a rectangular dialogue box containing the text: "${speechBubbleText}".`;
     }
 }
 
@@ -211,14 +230,16 @@ export async function selectGraphicStyle() {
         const stylesData = fs.readFileSync('./graphic_styles.json', 'utf8');
         const styles = JSON.parse(stylesData);
 
-        const { selectedStyleName } = await inquirer.prompt([
-            {
-                type: 'list',
-                name: 'selectedStyleName',
-                message: 'Choose a graphic style for the image:',
-                choices: [...styles.map(s => s.name), new inquirer.Separator(), 'Cancel'],
-            },
-        ]);
+        const choices = [
+            ...styles.map(s => ({ name: s.name, value: s.name })),
+            new Separator(),
+            { name: 'Cancel', value: 'Cancel' }
+        ];
+
+        const selectedStyleName = await select({
+            message: 'Choose a graphic style for the image:',
+            choices: choices,
+        });
 
         if (selectedStyleName === 'Cancel') {
             return null;
@@ -280,3 +301,12 @@ export async function generateAndParseJsonWithRetry(textGenerator, prompt, maxRe
     }
 }
 
+export async function loadCharacterLibrary() {
+    try {
+        const libraryData = fs.readFileSync('./character_library.json', 'utf8');
+        return JSON.parse(libraryData);
+    } catch (error) {
+        console.error("[APP-ERROR] Could not load or parse character_library.json:", error);
+        return {}; // Return an empty object on failure
+    }
+}

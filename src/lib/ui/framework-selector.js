@@ -1,33 +1,50 @@
-import inquirer from 'inquirer';
 import fs from 'fs';
 import path from 'path';
 
-export async function selectNarrativeFramework() {
+function setNarrativeFramework(config, frameworkPath) {
+    config.narrativeFrameworkPath = frameworkPath;
+    if (frameworkPath) {
+        console.log(`[APP-SUCCESS] Framework "${path.basename(frameworkPath, '.json')}" selected for this session.`);
+    } else {
+        console.log(`[APP-INFO] Narrative framework selection cleared.`);
+    }
+}
+
+export function buildFrameworksMenu(config) {
     const frameworksDir = path.join(process.cwd(), 'narrative_frameworks');
     try {
         const files = fs.readdirSync(frameworksDir).filter(file => file.endsWith('.json'));
-        if (files.length === 0) {
-            return null; // No frameworks to select
-        }
-
+        
         const choices = files.map(file => {
             const frameworkPath = path.join(frameworksDir, file);
             const framework = JSON.parse(fs.readFileSync(frameworkPath, 'utf8'));
-            return { name: framework.name, value: frameworkPath };
+            return { 
+                name: framework.name, 
+                value: frameworkPath,
+                action: () => setNarrativeFramework(config, frameworkPath),
+                popAfterAction: true
+            };
         });
 
-        choices.unshift({ name: 'None (Default)', value: null });
+        choices.unshift({ 
+            name: 'None (Default)', 
+            value: 'none',
+            action: () => setNarrativeFramework(config, null),
+            popAfterAction: true
+        });
 
-        const { selectedFramework } = await inquirer.prompt([{
-            type: 'list',
-            name: 'selectedFramework',
-            message: 'Select a narrative framework:',
+        return {
+            title: 'Select Narrative Framework',
+            message: 'Choose a framework:',
             choices: choices
-        }]);
+        };
 
-        return selectedFramework;
     } catch (error) {
         console.error('[APP-ERROR] Could not read or parse narrative frameworks:', error);
-        return null; // Return null on error to allow graceful failure
+        return {
+            title: 'Error',
+            message: 'Could not load narrative frameworks.',
+            choices: []
+        };
     }
 }

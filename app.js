@@ -4,6 +4,7 @@
 import 'dotenv/config'; // Load environment variables from .env file
 import { getImageGenerator } from './src/lib/image-generators/index.js';
 import { mainMenu } from './src/lib/ui/menu.js';
+import { menuManager } from './src/lib/ui/menu-manager.js';
 import fs from 'fs';
 
 export function loadConfig() {
@@ -28,7 +29,7 @@ async function start() {
         process.exit(1);
     }
 
-    await mainMenu(config, imageGenerator);
+    await menuManager(mainMenu(config, imageGenerator));
 }
 
 start();
