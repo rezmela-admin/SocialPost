@@ -22,27 +22,37 @@ try {
  * @throws {Error} If the configured provider is not supported or fails to load.
  */
 export async function getImageGenerator() {
-    const providerName = config.imageGeneration.provider;
-    
-    if (!providerName) {
-        throw new Error('[IMAGE-FACTORY-FATAL] Image generation "provider" is not specified in config.json.');
+    const imageConfig = config.imageGeneration;
+    const providerName = imageConfig.provider;
+
+    if (!providerName || !imageConfig.providers || !imageConfig.providers[providerName]) {
+        throw new Error('[IMAGE-FACTORY-FATAL] Image generation "provider" is not specified or invalid in config.json.');
     }
+
+    const providerConfig = imageConfig.providers[providerName];
+    // Combine the specific provider config with any top-level settings (like comicBorderSize)
+    const finalConfig = { ...imageConfig, ...providerConfig };
 
     console.log(`[IMAGE-FACTORY-INFO] Loading image generation provider: ${providerName}`);
 
     try {
+        let provider;
         switch (providerName.toLowerCase()) {
             case 'openai': {
-                const provider = await import('./openai-provider.js');
-                return provider.generateImage;
+                provider = await import('./openai-provider.js');
+                break;
             }
             case 'gemini': {
-                const provider = await import('./gemini-provider.js');
-                return provider.generateImage;
+                provider = await import('./gemini-provider.js');
+                break;
             }
             default:
                 throw new Error(`Unsupported image generation provider: "${providerName}". Please check your config.json.`);
         }
+
+        // Return a new function that passes the final, correct configuration to the provider.
+        return (prompt) => provider.generateImage(prompt, finalConfig);
+
     } catch (error) {
         console.error(`[IMAGE-FACTORY-FATAL] Failed to load the "${providerName}" image provider.`, error);
         // Re-throw the error to be handled by the application's main error handler.

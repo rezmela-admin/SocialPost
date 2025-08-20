@@ -74,11 +74,27 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
 
         console.log('[APP-INFO] All panels generated. Composing final comic strip...');
         const finalImagePath = path.join(process.cwd(), `comic-strip-${Date.now()}.png`);
-        const [width, height] = config.imageGeneration.size.split('x').map(Number);
+        const activeProvider = config.imageGeneration.provider;
+        const providerConfig = config.imageGeneration.providers[activeProvider];
+        const [width, height] = providerConfig.size.split('x').map(Number);
         const borderSize = config.imageGeneration.comicBorderSize || 10; // Default to 10px if not set
 
-        const finalWidth = (width * 2) + (borderSize * 3);
-        const finalHeight = (height * 2) + (borderSize * 3);
+        const numPanels = panelImagePaths.length;
+        const cols = numPanels > 1 ? 2 : 1;
+        const rows = Math.ceil(numPanels / cols);
+
+        const finalWidth = (width * cols) + (borderSize * (cols + 1));
+        const finalHeight = (height * rows) + (borderSize * (rows + 1));
+
+        const compositeOptions = panelImagePaths.map((panelPath, i) => {
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            return {
+                input: panelPath,
+                top: (row * height) + ((row + 1) * borderSize),
+                left: (col * width) + ((col + 1) * borderSize)
+            };
+        });
 
         await sharp({
             create: {
@@ -87,12 +103,10 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
                 channels: 4,
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
             }
-        }).composite([
-            { input: panelImagePaths[0], top: borderSize, left: borderSize },
-            { input: panelImagePaths[1], top: borderSize, left: width + (borderSize * 2) },
-            { input: panelImagePaths[2], top: height + (borderSize * 2), left: borderSize },
-            { input: panelImagePaths[3], top: height + (borderSize * 2), left: width + (borderSize * 2) }
-        ]).png().toFile(finalImagePath);
+        })
+        .composite(compositeOptions)
+        .png()
+        .toFile(finalImagePath);
 
         console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
         panelImagePaths.forEach(p => fs.unlinkSync(p));

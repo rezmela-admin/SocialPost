@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { select, editor, confirm as confirmPrompt, Separator } from '@inquirer/prompts';
+import { pathToFileURL } from 'url';
 import open from 'open';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import { jsonrepair } from 'jsonrepair';
@@ -73,8 +74,8 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             }
 
             if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
-                const dialogueText = panel.dialogue.map(d => `'${d.speech}' (spoken by ${d.character})`).join('; ');
-                promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. The dialogue is: ${dialogueText}. The text must be clear, fully visible, and not cut off.`);
+                const dialogueText = panel.dialogue.map(d => `${d.character} says: '${d.speech}'`).join('; ');
+                promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. ${dialogueText}. The text must be clear, fully visible, and not cut off.`);
             }
 
             panelPrompt = promptParts.join(' ');
@@ -88,13 +89,13 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             userAction = 'Retry'; // Force a retry
             continue;
         }
-        const tempImagePath = path.join(process.cwd(), `temp_panel_for_approval.png`);
+        const tempImagePath = path.join(process.cwd(), `temp_panel_for_approval_${Date.now()}.png`);
         fs.writeFileSync(tempImagePath, Buffer.from(imageB64, 'base64'));
         
         console.log(`[APP-INFO] Panel ${panelIndex + 1} image generated: ${tempImagePath}`);
         
         try {
-            await open(tempImagePath);
+            await open(pathToFileURL(tempImagePath).href);
         } catch (error) {
             console.warn(`[APP-WARN] Could not automatically open the image. Please open it manually: ${tempImagePath}`);
         }
@@ -149,11 +150,15 @@ export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }
         }
     }
 
+    // Extract panel count from the task description.
+    const panelCountMatch = activeProfile.task.match(/(\w+)-panel comic strip/);
+    const panelCountText = panelCountMatch ? panelCountMatch[1] : 'four'; // Default to four if not found
+
     const characterConsistencyInstruction = `
 CRITICAL INSTRUCTION: Before generating the panel details, you must first establish a consistent voice and personality for each character in the story.
 1. For well-known public figures: Use your internal knowledge to accurately model their famous speech patterns, cadence, and vocabulary.
-2. For all other characters (original or lesser-known): You must invent a distinct and consistent persona for them. Define their speaking style, and then adhere strictly to that definition throughout all four panels to ensure continuity.
-This is a mandatory first step. Now, generate the 4-panel comic strip based on the user's topic.
+2. For all other characters (original or lesser-known): You must invent a distinct and consistent persona for them. Define their speaking style, and then adhere strictly to that definition to ensure continuity across all panels.
+This is a mandatory first step. Now, generate the ${panelCountText}-panel comic strip based on the user's topic.
 `;
         
     return `${characterConsistencyInstruction}\n\n${taskPrompt}`;
