@@ -6,6 +6,8 @@ import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
 import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson, getPanelApproval, generateImageWithRetry, generateAndParseJsonWithRetry } from './utils.js';
 import { addJob } from './queue-manager.js';
+import { applyWatermark } from './image-processor.js';
+import { exportToPdf } from './pdf-exporter.js';
 
 export async function generateAndQueueComicStrip(postDetails, config, imageGenerator, narrativeFrameworkPath) {
     debugLog(config, "Entered generateAndQueueComicStrip function.");
@@ -33,14 +35,42 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
             taskPrompt = taskPrompt.replace('{CHARACTER_KEYS}', characterKeys);
         }
 
+        // --- [NEW] Dynamic Panel Count Validation & Retry Logic ---
+        const panelCountMatch = activeProfile.task.match(/(\w+)-panel comic strip/);
+        const panelCountText = panelCountMatch ? panelCountMatch[1] : 'four';
+        
+        const textToNumber = {
+            'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8
+        };
+        const expectedPanelCount = textToNumber[panelCountText.toLowerCase()] || parseInt(panelCountText, 10) || 4;
+
         let parsedResult;
-        try {
-            parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
-            console.log('[APP-SUCCESS] Successfully generated and sanitized comic panels from AI.');
-        } catch (e) {
-            console.error(`[APP-FATAL] Failed to get a valid comic strip from the AI after multiple attempts. Aborting.`, e);
+        let attempts = 0;
+        const maxAttempts = 3;
+        let isValid = false;
+
+        while (attempts < maxAttempts && !isValid) {
+            attempts++;
+            try {
+                console.log(`\n[APP-INFO] Attempting to generate a valid ${expectedPanelCount}-panel comic from AI (Attempt ${attempts}/${maxAttempts})...`);
+                parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
+                
+                if (parsedResult.panels && parsedResult.panels.length === expectedPanelCount) {
+                    isValid = true;
+                    console.log(`[APP-SUCCESS] Successfully generated and validated ${parsedResult.panels.length}-panel comic script.`);
+                } else {
+                    console.warn(`[APP-WARN] AI did not return the expected ${expectedPanelCount} panels. Received ${parsedResult.panels?.length || 0}. Retrying...`);
+                }
+            } catch (e) {
+                console.error(`[APP-ERROR] Attempt ${attempts} failed to get a valid comic strip from the AI.`, e);
+            }
+        }
+
+        if (!isValid) {
+            console.error(`[APP-FATAL] Failed to get a valid ${expectedPanelCount}-panel comic strip from the AI after ${maxAttempts} attempts. Aborting.`);
             return { success: false };
         }
+        // --- End of New Logic ---
 
         let { summary, panels } = parsedResult;
         debugLog(config, `Parsed panels from AI: ${JSON.stringify(panels, null, 2)}`);
@@ -108,9 +138,17 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         .png()
         .toFile(finalImagePath);
 
+        await applyWatermark(finalImagePath, config);
+
         console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
         panelImagePaths.forEach(p => fs.unlinkSync(p));
         console.log('[APP-INFO] Cleaned up temporary panel images.');
+
+        const exportAsPdf = await confirmPrompt({ message: 'Export this comic as a PDF?', default: false });
+        if (exportAsPdf) {
+            const pdfPath = finalImagePath.replace('.png', '.pdf');
+            await exportToPdf(finalImagePath, pdfPath);
+        }
 
         addJob({
             topic: postDetails.topic,
@@ -178,7 +216,16 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
         const uniqueImageName = `post-image-${Date.now()}.png`;
         const imagePath = path.join(process.cwd(), uniqueImageName);
         fs.writeFileSync(imagePath, Buffer.from(imageB64, 'base64'));
+        
+        await applyWatermark(imagePath, config);
+
         console.log(`[APP-SUCCESS] Image created and saved to: ${imagePath}`);
+
+        const exportAsPdf = await confirmPrompt({ message: 'Export this image as a PDF?', default: false });
+        if (exportAsPdf) {
+            const pdfPath = imagePath.replace('.png', '.pdf');
+            await exportToPdf(imagePath, pdfPath);
+        }
 
         addJob({
             topic: postDetails.topic,

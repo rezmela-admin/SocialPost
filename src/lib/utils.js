@@ -6,6 +6,9 @@ import open from 'open';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import { jsonrepair } from 'jsonrepair';
 
+
+
+
 export async function generateImageWithRetry(imageGenerator, initialPrompt, config, textGenerator, maxRetries = 3) {
     let lastError = null;
     for (let i = 0; i < maxRetries; i++) {
@@ -186,9 +189,9 @@ export async function getApprovedInput(text, inputType) {
         if (action === 'Cancel') return null;
         if (action === 'Edit') {
             const editedText = await editor({
-                message: `Editing ${inputType}. Save and close your editor to continue.`,
+                message: `Editing ${inputType}. Save and close your editor to continue.`, 
                 default: text,
-                validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`,
+                validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`, 
             });
             return editedText.trim();
         }

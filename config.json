@@ -110,5 +110,15 @@
   },
   "worker": {
     "exitAfterSingleJob": true
+  },
+  "imageWatermarking": {
+    "enabled": true,
+    "text": "https://ramesh2050.com",
+    "font": "Arial",
+    "fontColor": "#FFFFFF",
+    "fontSize": 18,
+    "position": "bottom-right",
+    "watermarkBackgroundColor": "#000000",
+    "watermarkBackgroundOpacity": 0.5
   }
 }

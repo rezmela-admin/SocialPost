@@ -121,7 +121,9 @@ async function postToPlatform(page, job, platformConfig, timeouts) {
     // Use the robust 'getByRole' for X, but the standard selector for others.
     if (platformConfig.composeUrl.includes('x.com')) {
         // Using .type() with a delay to simulate human typing and avoid race conditions with hashtag popups.
-        await page.getByRole('textbox', { name: 'Post text' }).type(summary, { delay: typingDelay, timeout: typingTimeout });
+        const textbox = page.getByRole('textbox', { name: 'Post text' });
+        await textbox.type(summary, { delay: typingDelay, timeout: typingTimeout });
+        await page.keyboard.press('Escape'); // <-- ADDED: Dismiss hashtag suggestion popup
     } else {
         // Using .type() with a delay for other platforms as well for robustness.
         await postTextBox.type(summary, { delay: typingDelay, timeout: typingTimeout });
