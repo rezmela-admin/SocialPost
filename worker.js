@@ -123,7 +123,6 @@ async function postToPlatform(page, job, platformConfig, timeouts) {
         // Using .type() with a delay to simulate human typing and avoid race conditions with hashtag popups.
         const textbox = page.getByRole('textbox', { name: 'Post text' });
         await textbox.type(summary, { delay: typingDelay, timeout: typingTimeout });
-        await page.keyboard.press('Escape'); // <-- ADDED: Dismiss hashtag suggestion popup
     } else {
         // Using .type() with a delay for other platforms as well for robustness.
         await postTextBox.type(summary, { delay: typingDelay, timeout: typingTimeout });
