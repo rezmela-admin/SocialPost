@@ -2,12 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { select, editor, confirm as confirmPrompt } from '@inquirer/prompts';
 import { execSync } from 'child_process';
-import sharp from 'sharp';
 import { getTextGenerator } from './text-generators/index.js';
 import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson, getPanelApproval, generateImageWithRetry, generateAndParseJsonWithRetry } from './utils.js';
 import { addJob } from './queue-manager.js';
 import { applyWatermark } from './image-processor.js';
 import { exportToPdf } from './pdf-exporter.js';
+import { composeComicStrip } from './comic-composer.js';
 
 export async function generateAndQueueComicStrip(postDetails, config, imageGenerator, narrativeFrameworkPath) {
     debugLog(config, "Entered generateAndQueueComicStrip function.");
@@ -20,7 +20,8 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
     const textGenerator = getTextGenerator(config);
 
     try {
-        console.log(`\n[APP-INFO] Generating 4-panel comic strip for topic: "${postDetails.topic}"`);
+        console.log(`
+[APP-INFO] Generating comic strip for topic: "${postDetails.topic}"`);
         const characterLibrary = JSON.parse(fs.readFileSync('./character_library.json', 'utf8'));
         const hasCharacterLibrary = !!(characterLibrary && Object.keys(characterLibrary).length > 0);
 
@@ -35,14 +36,7 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
             taskPrompt = taskPrompt.replace('{CHARACTER_KEYS}', characterKeys);
         }
 
-        // --- [NEW] Dynamic Panel Count Validation & Retry Logic ---
-        const panelCountMatch = activeProfile.task.match(/(\w+)-panel comic strip/);
-        const panelCountText = panelCountMatch ? panelCountMatch[1] : 'four';
-        
-        const textToNumber = {
-            'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8
-        };
-        const expectedPanelCount = textToNumber[panelCountText.toLowerCase()] || parseInt(panelCountText, 10) || 4;
+        const expectedPanelCount = activeProfile.expectedPanelCount || 4;
 
         let parsedResult;
         let attempts = 0;
@@ -52,14 +46,17 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         while (attempts < maxAttempts && !isValid) {
             attempts++;
             try {
-                console.log(`\n[APP-INFO] Attempting to generate a valid ${expectedPanelCount}-panel comic from AI (Attempt ${attempts}/${maxAttempts})...`);
+                console.log(`
+[APP-INFO] Attempting to generate a valid ${expectedPanelCount}-panel comic from AI (Attempt ${attempts}/${maxAttempts})...
+`);
                 parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
                 
                 if (parsedResult.panels && parsedResult.panels.length === expectedPanelCount) {
                     isValid = true;
                     console.log(`[APP-SUCCESS] Successfully generated and validated ${parsedResult.panels.length}-panel comic script.`);
                 } else {
-                    console.warn(`[APP-WARN] AI did not return the expected ${expectedPanelCount} panels. Received ${parsedResult.panels?.length || 0}. Retrying...`);
+                    console.warn(`[APP-WARN] AI did not return the expected ${expectedPanelCount} panels. Received ${parsedResult.panels?.length || 0}. Retrying...
+`);
                 }
             } catch (e) {
                 console.error(`[APP-ERROR] Attempt ${attempts} failed to get a valid comic strip from the AI.`, e);
@@ -70,7 +67,6 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
             console.error(`[APP-FATAL] Failed to get a valid ${expectedPanelCount}-panel comic strip from the AI after ${maxAttempts} attempts. Aborting.`);
             return { success: false };
         }
-        // --- End of New Logic ---
 
         let { summary, panels } = parsedResult;
         debugLog(config, `Parsed panels from AI: ${JSON.stringify(panels, null, 2)}`);
@@ -91,11 +87,10 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
 
         for (let i = 0; i < panels.length; i++) {
             const panel = panels[i];
-            const approvedPanelPath = await getPanelApproval(panel, i, imageGenerator, config, textGenerator, selectedStyle, characterLibrary);
+            const approvedPanelPath = await getPanelApproval(panel, i, imageGenerator, config, textGenerator, selectedStyle, characterLibrary, panels.length);
 
             if (!approvedPanelPath) {
                 console.log('[APP-INFO] Comic strip generation cancelled by user.');
-                // Clean up any previously approved panels
                 panelImagePaths.forEach(p => fs.unlinkSync(p));
                 return { success: false, wasCancelled: true };
             }
@@ -103,40 +98,7 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         }
 
         console.log('[APP-INFO] All panels generated. Composing final comic strip...');
-        const finalImagePath = path.join(process.cwd(), `comic-strip-${Date.now()}.png`);
-        const activeProvider = config.imageGeneration.provider;
-        const providerConfig = config.imageGeneration.providers[activeProvider];
-        const [width, height] = providerConfig.size.split('x').map(Number);
-        const borderSize = config.imageGeneration.comicBorderSize || 10; // Default to 10px if not set
-
-        const numPanels = panelImagePaths.length;
-        const cols = numPanels > 1 ? 2 : 1;
-        const rows = Math.ceil(numPanels / cols);
-
-        const finalWidth = (width * cols) + (borderSize * (cols + 1));
-        const finalHeight = (height * rows) + (borderSize * (rows + 1));
-
-        const compositeOptions = panelImagePaths.map((panelPath, i) => {
-            const row = Math.floor(i / cols);
-            const col = i % cols;
-            return {
-                input: panelPath,
-                top: (row * height) + ((row + 1) * borderSize),
-                left: (col * width) + ((col + 1) * borderSize)
-            };
-        });
-
-        await sharp({
-            create: {
-                width: finalWidth,
-                height: finalHeight,
-                channels: 4,
-                background: { r: 255, g: 255, b: 255, alpha: 1 }
-            }
-        })
-        .composite(compositeOptions)
-        .png()
-        .toFile(finalImagePath);
+        const finalImagePath = await composeComicStrip(panelImagePaths, postDetails.comicLayout, config);
 
         await applyWatermark(finalImagePath, config);
 
@@ -168,7 +130,8 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
 export async function generateAndQueuePost(postDetails, config, imageGenerator, skipSummarization = false, narrativeFrameworkPath) {
     const textGenerator = getTextGenerator(config);
     try {
-        console.log(`\n[APP-INFO] Generating content for topic: "${postDetails.topic}"`);
+        console.log(`
+[APP-INFO] Generating content for topic: "${postDetails.topic}"`);
         const activeProfileName = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : null;
 
         let summary, finalImagePrompt, parsedResult = {};
@@ -209,7 +172,8 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
             finalImagePrompt = await getApprovedInput(finalImagePrompt, 'image prompt') || finalImagePrompt;
         }
 
-        console.log(`[APP-INFO] Sending final prompt to image generator...`);
+        console.log(`[APP-INFO] Sending final prompt to image generator...
+`);
         debugLog(config, `Final Image Prompt: ${finalImagePrompt}`);
         
         const imageB64 = await generateImageWithRetry(imageGenerator, finalImagePrompt, config, textGenerator);
@@ -245,7 +209,8 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
 export async function generateVirtualInfluencerPost(postDetails, config, imageGenerator, skipSummarization = false, narrativeFrameworkPath) {
      const textGenerator = getTextGenerator(config);
     try {
-        console.log(`\n[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "${postDetails.topic}"`);
+        console.log(`
+[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "${postDetails.topic}"`);
         const activeProfileName = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : 'virtual_influencer';
 
         let summary, dialogue, backgroundPrompt, parsedResult = {};

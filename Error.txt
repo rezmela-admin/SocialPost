@@ -1,17 +1,4 @@
-PS D:\Gemini\SocialPost> node test_gemini_image.js
-node:internal/modules/package_json_reader:255
-  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
-        ^
+-- Comic Strip Composition Tester ---
 
-Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@google/genai' imported from D:\Gemini\SocialPost\src\lib\image-generators\gemini-provider.js
-    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:255:9)
-    at packageResolve (node:internal/modules/esm/resolve:767:81)
-    at moduleResolve (node:internal/modules/esm/resolve:853:18)
-    at defaultResolve (node:internal/modules/esm/resolve:983:11)
-    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:799:12)
-    at #cachedDefaultResolve (node:internal/modules/esm/loader:723:25)
-    at ModuleLoader.resolve (node:internal/modules/esm/loader:706:38)
-    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:307:38)
-    at #link (node:internal/modules/esm/module_job:170:49) {
-  code: 'ERR_MODULE_NOT_FOUND'
-}
+[ERROR] No "approved-panel-*.png" files found in the project root.
+Please generate some panels first before running this test script.

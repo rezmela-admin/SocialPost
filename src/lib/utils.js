@@ -36,53 +36,39 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
     throw lastError;
 }
 
-export async function getPanelApproval(panel, panelIndex, imageGenerator, config, textGenerator, selectedStyle, characterLibrary) {
+export async function getPanelApproval(panel, panelIndex, imageGenerator, config, textGenerator, selectedStyle, characterLibrary, totalPanels) {
     let approvedImagePath = null;
     let userAction = '';
-    let panelPrompt = '';
+
+    // Initialize panelPrompt with the full, composite prompt text.
+    let promptParts = [
+        `${selectedStyle.prompt}`,
+        `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
+    ];
+
+    if (panel.characters && Array.isArray(panel.characters)) {
+        panel.characters.forEach(charObj => {
+            const characterName = charObj.name;
+            let finalDescription;
+            if (characterLibrary[characterName]) {
+                finalDescription = characterLibrary[characterName];
+            } else {
+                finalDescription = charObj.description || `A character named ${characterName}.`;
+                console.warn(`[APP-WARN] Character "${characterName}" not found in library, using AI description.`);
+            }
+            promptParts.push(`The character ${characterName} MUST be depicted as: ${finalDescription}.`);
+        });
+    }
+
+    if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
+        const dialogueText = panel.dialogue.map(d => `${d.character} says: '${d.speech}'`).join('; ');
+        promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. ${dialogueText}. The text must be clear, fully visible, and not cut off.`);
+    }
+    
+    let panelPrompt = promptParts.join(' ');
 
     do {
-        console.log(`[APP-INFO] Generating panel ${panelIndex + 1} of 4...`);
-
-        if (userAction !== 'Edit') {
-            let promptParts = [
-                `${selectedStyle.prompt}`,
-                `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
-            ];
-
-            // New, robust character injection logic with correct priority
-            if (panel.characters && Array.isArray(panel.characters)) {
-                panel.characters.forEach(charObj => {
-                    const characterName = charObj.name;
-                    let finalDescription;
-
-                    if (characterLibrary[characterName]) {
-                        // Priority 1: Use the canonical description from the library.
-                        finalDescription = characterLibrary[characterName];
-                    } else {
-                        // Priority 2: Use the AI's description from the panel script.
-                        finalDescription = charObj.description;
-                        console.warn(`[APP-WARN] Character "${characterName}" not found in character_library.json.`);
-                        
-                        if (!finalDescription) {
-                            // Priority 3: Generate a placeholder if the AI didn't provide one.
-                            finalDescription = `A character named ${characterName}. Their appearance should be plausible and distinct from other characters in the panel.`;
-                            console.log(`[APP-INFO] Using temporary description for "${characterName}": "${finalDescription}"`);
-                        } else {
-                            console.log(`[APP-INFO] Using AI-generated description for new character "${characterName}": "${finalDescription}"`);
-                        }
-                    }
-                    promptParts.push(`The character ${characterName} MUST be depicted as: ${finalDescription}.`);
-                });
-            }
-
-            if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
-                const dialogueText = panel.dialogue.map(d => `${d.character} says: '${d.speech}'`).join('; ');
-                promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. ${dialogueText}. The text must be clear, fully visible, and not cut off.`);
-            }
-
-            panelPrompt = promptParts.join(' ');
-        }
+        console.log(`[APP-INFO] Generating panel ${panelIndex + 1} of ${totalPanels}...`);
 
         let imageB64;
         try {
@@ -122,10 +108,10 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
             console.log(`[APP-SUCCESS] Panel ${panelIndex + 1} approved: ${approvedImagePath}`);
         } else if (userAction === 'Edit') {
             const editedPrompt = await editor({
-                message: 'Edit the prompt for this panel:',
-                default: panelPrompt,
+                message: 'Edit the full prompt for this panel:',
+                default: panelPrompt, // Pass the full prompt to the editor
             });
-            panelPrompt = editedPrompt;
+            panelPrompt = editedPrompt; // Update the prompt with the user's edits
         } else {
             fs.unlinkSync(tempImagePath);
         }

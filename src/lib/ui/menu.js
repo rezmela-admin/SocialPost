@@ -1,4 +1,4 @@
-import { editor, checkbox, confirm as confirmPrompt } from '@inquirer/prompts';
+import { editor, checkbox, confirm as confirmPrompt, select } from '@inquirer/prompts';
 import path from 'path';
 import fs from 'fs';
 import chalk from 'chalk';
@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { manageCreativeProfiles } from '../profile-manager.js';
 import { getPendingJobCount, getAnyJobCount, clearQueue } from '../queue-manager.js';
 import { generateAndQueueComicStrip, generateAndQueuePost, generateVirtualInfluencerPost } from '../workflows.js';
+import { getAvailableLayouts } from '../comic-composer.js';
 import { displayBanner } from './banner.js';
 import { buildFrameworksMenu } from './framework-selector.js';
 
@@ -36,7 +37,8 @@ function generatePostMenu(config, imageGenerator) {
     const postDetails = {
         topic: config.search.defaultTopic,
         platforms: [],
-        skipSummarization: false
+        skipSummarization: false,
+        comicLayout: null
     };
 
     return () => {
@@ -61,7 +63,31 @@ function generatePostMenu(config, imageGenerator) {
             ]
         };
 
-        if (config.prompt.workflow !== 'comicStrip') {
+        if (config.prompt.workflow === 'comicStrip') {
+            const expectedPanelCount = config.prompt.expectedPanelCount || 4; // Default to 4 if not specified
+            const availableLayouts = getAvailableLayouts(expectedPanelCount);
+            
+            // Set a default layout if not already set
+            if (!postDetails.comicLayout && availableLayouts.length > 0) {
+                postDetails.comicLayout = availableLayouts[0].value;
+            }
+
+            menu.choices.push({
+                name: `Select Layout (Current: ${postDetails.comicLayout || 'None'})`,
+                value: 'selectLayout',
+                action: async () => {
+                    if (availableLayouts.length === 0) {
+                        console.log(chalk.red(`\n[APP-ERROR] No layouts available for a ${expectedPanelCount}-panel comic. Please check your profile.`));
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        return;
+                    }
+                    postDetails.comicLayout = await select({
+                        message: 'Choose a comic strip layout:',
+                        choices: availableLayouts
+                    });
+                }
+            });
+        } else {
             menu.choices.push({
                 name: `Use Topic as Summary (Current: ${postDetails.skipSummarization})`,
                 value: 'toggleSkipSummarization',
@@ -77,6 +103,11 @@ function generatePostMenu(config, imageGenerator) {
             action: async () => {
                 if (!postDetails.topic || postDetails.platforms.length === 0) {
                     console.log(chalk.red('\n[APP-ERROR] Topic and at least one platform must be set before generating.'));
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    return;
+                }
+                if (config.prompt.workflow === 'comicStrip' && !postDetails.comicLayout) {
+                    console.log(chalk.red('\n[APP-ERROR] A comic strip layout must be selected before generating.'));
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     return;
                 }
