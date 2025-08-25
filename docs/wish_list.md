@@ -17,3 +17,7 @@ This document tracks feature ideas and long-term goals for the Automated Daily C
 7.  **Bypass URL:** Add a URL to every post that allows readers to bypass gatekeepers and view the content directly.
 
 8.  **Unified Comic Generation Workflow:** Consolidate the separate single-panel and multi-panel workflows into a single, flexible system. This would allow the user to select a grid layout (e.g., 1x1 for a single image, 2x2 for a standard comic, 2x3 for a longer strip) and eventually format the output for standard sizes like a 6x9 comic book.
+
+9.  **Image Archiving System:** Add a configuration option to retain generated images instead of deleting them. When retained, images should be saved to a structured directory, for example: `output/[YYYY-MM-DD]/[topic]/image.png`.
+
+10. **Instagram Integration:** Add support for posting generated images and summaries to Instagram.

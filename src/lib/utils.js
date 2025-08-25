@@ -27,6 +27,8 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
             if (error.message && error.message.toLowerCase().includes('safety')) {
                 console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, 2000));
+            } else if (error.message && error.message.includes('Could not find image data in Gemini response.')) {
+                console.warn(`[APP-WARN] Image generation failed as no image data was returned from Gemini. Retrying... (${i + 1}/${maxRetries})`);
             } else {
                 throw error;
             }
