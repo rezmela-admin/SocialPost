@@ -4,11 +4,11 @@ import { select, input, confirm as confirmPrompt, Separator } from '@inquirer/pr
 
 const PROFILES_DIR = './prompt_profiles';
 
-async function loadProfile(config) {
+async function loadProfile(sessionState) {
     const profiles = fs.readdirSync(PROFILES_DIR).filter(file => file.endsWith('.json'));
     if (profiles.length === 0) {
         console.log("[APP-INFO] No creative profiles found.");
-        return config;
+        return sessionState;
     }
 
     const choices = [
@@ -24,27 +24,27 @@ async function loadProfile(config) {
 
     if (profileToLoad === 'Cancel') {
         console.log("[APP-INFO] Operation cancelled.");
-        return config;
+        return sessionState;
     }
 
     try {
         const profilePath = path.join(PROFILES_DIR, profileToLoad);
         const profileContent = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
 
-        config.prompt = profileContent;
-        if (!config.prompt.workflow) {
-            config.prompt.workflow = 'standard';
+        sessionState.prompt = profileContent;
+        if (!sessionState.prompt.workflow) {
+            sessionState.prompt.workflow = 'standard';
         }
-        config.prompt.profilePath = profilePath;
+        sessionState.prompt.profilePath = profilePath;
 
         console.log(`[APP-SUCCESS] Profile "${profileToLoad}" loaded for the current session.`);
     } catch (error) {
         console.error(`[APP-ERROR] Failed to load profile "${profileToLoad}":`, error);
     }
-    return config;
+    return sessionState;
 }
 
-async function createNewProfile(config) {
+async function createNewProfile(sessionState) {
     console.log("\n--- Create New Profile ---");
 
     const filename = await input({
@@ -87,10 +87,10 @@ async function createNewProfile(config) {
     const loadNow = await confirmPrompt({ message: 'Load this new profile now?', default: true });
     if (loadNow) {
         newProfile.profilePath = profilePath;
-        config.prompt = newProfile;
+        sessionState.prompt = newProfile;
         console.log(`[APP-SUCCESS] Profile "${filename}.json" is now the active configuration for this session.`);
     }
-    return config;
+    return sessionState;
 }
 
 async function deleteProfile() {
@@ -131,8 +131,8 @@ async function deleteProfile() {
     }
 }
 
-export async function manageCreativeProfiles(config) {
-    const activeProfile = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : 'Default';
+export async function manageCreativeProfiles(sessionState) {
+    const activeProfile = sessionState.prompt.profilePath ? path.basename(sessionState.prompt.profilePath) : 'Default';
     
     const choices = [
         { name: 'Load a Profile (Switch to a different character/style)', value: 'Load a Profile (Switch to a different character/style)' },
@@ -149,9 +149,9 @@ export async function manageCreativeProfiles(config) {
 
     switch (action) {
         case 'Load a Profile (Switch to a different character/style)':
-            return await loadProfile(config);
+            return await loadProfile(sessionState);
         case 'Create a New Profile (Build a new character/style)':
-            return await createNewProfile(config);
+            return await createNewProfile(sessionState);
         case 'Delete a Profile':
             await deleteProfile();
             break;
@@ -159,5 +159,6 @@ export async function manageCreativeProfiles(config) {
         default:
             break;
     }
-    return config;
+    return sessionState;
 }
+

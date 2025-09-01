@@ -20,7 +20,8 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
                 currentPrompt = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
                 console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
             }
-            const imageB64 = await imageGenerator(currentPrompt, config.imageGeneration);
+            // Pass the entire session config to the provider
+            const imageB64 = await imageGenerator(currentPrompt, config);
             return imageB64;
         } catch (error) {
             lastError = error;
@@ -163,9 +164,10 @@ export function debugLog(config, message) {
 }
 
 export async function getApprovedInput(text, inputType) {
+    let currentText = text;
     while (true) {
         const action = await select({
-            message: `Generated ${inputType}:\n\n"${text}"\n\nApprove or edit?`,
+            message: `Generated ${inputType}:\n\n"${currentText}"\n\nApprove or edit?`,
             choices: [
                 { name: 'Approve', value: 'Approve' },
                 { name: 'Edit', value: 'Edit' },
@@ -173,15 +175,15 @@ export async function getApprovedInput(text, inputType) {
             ]
         });
 
-        if (action === 'Approve') return text;
+        if (action === 'Approve') return currentText;
         if (action === 'Cancel') return null;
         if (action === 'Edit') {
             const editedText = await editor({
                 message: `Editing ${inputType}. Save and close your editor to continue.`, 
-                default: text,
-                validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`, 
+                default: currentText,
+                validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`,
             });
-            return editedText.trim();
+            currentText = editedText.trim();
         }
     }
 }
@@ -245,7 +247,7 @@ export async function selectGraphicStyle() {
 
     } catch (error) {
         console.error("[APP-ERROR] Could not load or parse graphic_styles.json:", error);
-        return null;
+        return null; // Return an empty object on failure
     }
 }
 

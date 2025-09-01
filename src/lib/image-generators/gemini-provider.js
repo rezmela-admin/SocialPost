@@ -15,7 +15,7 @@ function debugLog(message) {
     }
 }
 
-export async function generateImage(prompt, options) {
+export async function generateImage(prompt, sessionState) {
     if (!process.env.GEMINI_API_KEY) {
         throw new Error("[GEMINI-PROVIDER-FATAL] Gemini API key is not configured. Please check your .env file or .gemini/settings.json.");
     }
@@ -25,16 +25,22 @@ export async function generateImage(prompt, options) {
         ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
     }
 
-    debugLog(`Gemini SDK Request: Model=${options.model}, Prompt="${prompt}"`);
+    const providerConfig = sessionState.imageGeneration.providers.gemini;
+    const model = providerConfig.model;
+    debugLog(`Gemini SDK Request: Model=${model}, Prompt="${prompt}"`);
 
     try {
-        const response = await ai.models.generateImages({
-            model: options.model,
+        const payload = {
+            model: model,
             prompt: prompt,
             config: {
                 numberOfImages: 1,
             },
-        });
+        };
+        
+        debugLog(`Payload: ${JSON.stringify(payload, null, 2)}`);
+
+        const response = await ai.models.generateImages(payload);
 
         if (response.generatedImages && response.generatedImages.length > 0) {
             const imageBytes = response.generatedImages[0].image.imageBytes;

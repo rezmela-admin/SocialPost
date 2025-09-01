@@ -1,4 +1,34 @@
--- Comic Strip Composition Tester ---
+--- Generate New Post ---
+✔ Configure the post details: Select Platforms (Current: None)
+✔ Queue for which platforms? X, LinkedIn, Bluesky
 
-[ERROR] No "approved-panel-*.png" files found in the project root.
-Please generate some panels first before running this test script.
+--- Generate New Post ---
+✔ Configure the post details: Set Topic (Current: Health and Fitness: A UCL study suggests aligning workouts with
+personality types boosts fitness and reduces stress. Extroverts benefit from high-intensity interval training (HIIT),
+while those with higher neuroticism prefer short, private exercise sessions.)
+✔ Current Topic: "Health and Fitness: A UCL study suggests aligning workouts with personality types boosts fitness and
+reduces stress. Extroverts benefit from high-intensity interval training (HIIT), while those with higher neuroticism
+prefer short, private exercise sessions." Edit
+✔ Edit the topic:
+✔ Current Topic: "God understands the laments of man the same way we understand those of a yapping dog." Approve
+
+--- Generate New Post ---
+✔ Configure the post details: Confirm and Generate Post
+✔ Proceed with generating this post? Yes
+
+[APP-INFO] Generating content for topic: "God understands the laments of man the same way we understand those of a yapping dog."
+✔ Generated summary:
+
+"Why your prayers might sound like dog barks to the divine ear: It's not about being unheard, but about shifting from
+mere lament to meaningful intent."
+
+Approve or edit? Edit
+✔ Editing summary. Save and close your editor to continue.
+? Choose a graphic style for the image:
+❯ Vintage Comic Book
+  Photorealistic Digital Painting
+  Modern Animated Movie Still
+  Futuristic Watercolor Dream
+  Ornate Stained Glass Fantasy
+  Classic Manga Panel
+  Post-Modern Superhero Art

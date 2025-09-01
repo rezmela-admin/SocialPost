@@ -1,28 +1,38 @@
 import fs from 'fs';
 import path from 'path';
-import { select, editor, confirm as confirmPrompt } from '@inquirer/prompts';
 import { execSync } from 'child_process';
+import { confirm as confirmPrompt, editor, select } from '@inquirer/prompts';
 import { getTextGenerator } from './text-generators/index.js';
-import { getApprovedInput, geminiRequestWithRetry, selectGraphicStyle, debugLog, promptForSpeechBubble, buildTaskPrompt, sanitizeAndParseJson, getPanelApproval, generateImageWithRetry, generateAndParseJsonWithRetry } from './utils.js';
 import { addJob } from './queue-manager.js';
-import { applyWatermark } from './image-processor.js';
 import { exportToPdf } from './pdf-exporter.js';
 import { composeComicStrip } from './comic-composer.js';
+import { applyWatermark } from './image-processor.js';
+import { 
+    debugLog, 
+    buildTaskPrompt, 
+    generateAndParseJsonWithRetry, 
+    getApprovedInput, 
+    generateImageWithRetry, 
+    selectGraphicStyle,
+    promptForSpeechBubble,
+    getPanelApproval
+} from './utils.js';
 
-export async function generateAndQueueComicStrip(postDetails, config, imageGenerator, narrativeFrameworkPath) {
-    debugLog(config, "Entered generateAndQueueComicStrip function.");
-    const activeProfilePath = config.prompt.profilePath;
-    if (!activeProfilePath || !fs.existsSync(activeProfilePath)) {
-        console.error("[APP-FATAL] The active profile path is not set or the file does not exist. Please load a profile.");
+export async function generateAndQueueComicStrip(sessionState, postDetails, imageGenerator) {
+    const narrativeFrameworkPath = sessionState.narrativeFrameworkPath;
+    debugLog(sessionState, "Entered generateAndQueueComicStrip function.");
+    
+    const activeProfile = sessionState.prompt;
+    if (!activeProfile || !activeProfile.profilePath) {
+        console.error("[APP-FATAL] The active profile is not set. Please load a profile.");
         return { success: false };
     }
-    const activeProfile = JSON.parse(fs.readFileSync(activeProfilePath, 'utf8'));
-    const textGenerator = getTextGenerator(config);
+    
+    const textGenerator = getTextGenerator(sessionState);
 
     try {
-        console.log(`
-[APP-INFO] Generating comic strip for topic: "${postDetails.topic}"`);
-        const characterLibrary = JSON.parse(fs.readFileSync('./character_library.json', 'utf8'));
+        console.log(`\n[APP-INFO] Generating comic strip for topic: "${postDetails.topic}"`);
+        const characterLibrary = sessionState.characterLibrary;
         const hasCharacterLibrary = !!(characterLibrary && Object.keys(characterLibrary).length > 0);
 
         let taskPrompt = buildTaskPrompt({
@@ -46,17 +56,14 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         while (attempts < maxAttempts && !isValid) {
             attempts++;
             try {
-                console.log(`
-[APP-INFO] Attempting to generate a valid ${expectedPanelCount}-panel comic from AI (Attempt ${attempts}/${maxAttempts})...
-`);
+                console.log(`\n[APP-INFO] Attempting to generate a valid ${expectedPanelCount}-panel comic from AI (Attempt ${attempts}/${maxAttempts})...`);
                 parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
                 
                 if (parsedResult.panels && parsedResult.panels.length === expectedPanelCount) {
                     isValid = true;
                     console.log(`[APP-SUCCESS] Successfully generated and validated ${parsedResult.panels.length}-panel comic script.`);
                 } else {
-                    console.warn(`[APP-WARN] AI did not return the expected ${expectedPanelCount} panels. Received ${parsedResult.panels?.length || 0}. Retrying...
-`);
+                    console.warn(`[APP-WARN] AI did not return the expected ${expectedPanelCount} panels. Received ${parsedResult.panels?.length || 0}. Retrying...`);
                 }
             } catch (e) {
                 console.error(`[APP-ERROR] Attempt ${attempts} failed to get a valid comic strip from the AI.`, e);
@@ -69,7 +76,7 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         }
 
         let { summary, panels } = parsedResult;
-        debugLog(config, `Parsed panels from AI: ${JSON.stringify(panels, null, 2)}`);
+        debugLog(sessionState, `Parsed panels from AI: ${JSON.stringify(panels, null, 2)}`);
 
         const approvedSummary = await getApprovedInput(summary, 'comic strip summary');
         if (!approvedSummary) {
@@ -87,7 +94,7 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
 
         for (let i = 0; i < panels.length; i++) {
             const panel = panels[i];
-            const approvedPanelPath = await getPanelApproval(panel, i, imageGenerator, config, textGenerator, selectedStyle, characterLibrary, panels.length);
+            const approvedPanelPath = await getPanelApproval(panel, i, imageGenerator, sessionState, textGenerator, selectedStyle, characterLibrary, panels.length);
 
             if (!approvedPanelPath) {
                 console.log('[APP-INFO] Comic strip generation cancelled by user.');
@@ -98,9 +105,14 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
         }
 
         console.log('[APP-INFO] All panels generated. Composing final comic strip...');
-        const finalImagePath = await composeComicStrip(panelImagePaths, postDetails.comicLayout, config);
+        const activeProvider = sessionState.imageGeneration.provider;
+        const providerConfig = sessionState.imageGeneration.providers[activeProvider];
+        const [panelWidth, panelHeight] = providerConfig.size.split('x').map(Number);
+        const borderSize = sessionState.imageGeneration.comicBorderSize || 10;
+        
+        const finalImagePath = await composeComicStrip(panelImagePaths, postDetails.comicLayout, panelWidth, panelHeight, borderSize);
 
-        await applyWatermark(finalImagePath, config);
+        await applyWatermark(finalImagePath, sessionState);
 
         console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
         panelImagePaths.forEach(p => fs.unlinkSync(p));
@@ -117,7 +129,7 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
             summary: summary,
             imagePath: path.basename(finalImagePath),
             platforms: postDetails.platforms,
-            profile: path.basename(config.prompt.profilePath || 'default'),
+            profile: path.basename(sessionState.prompt.profilePath || 'default'),
         });
         return { success: true };
 
@@ -127,40 +139,58 @@ export async function generateAndQueueComicStrip(postDetails, config, imageGener
     }
 }
 
-export async function generateAndQueuePost(postDetails, config, imageGenerator, skipSummarization = false, narrativeFrameworkPath) {
-    const textGenerator = getTextGenerator(config);
+export async function generateAndQueuePost(sessionState, postDetails, imageGenerator, skipSummarization = false) {
+    const narrativeFrameworkPath = sessionState.narrativeFrameworkPath;
+    const textGenerator = getTextGenerator(sessionState);
     try {
-        console.log(`
-[APP-INFO] Generating content for topic: "${postDetails.topic}"`);
-        const activeProfileName = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : null;
+        console.log(`\n[APP-INFO] Generating content for topic: "${postDetails.topic}"`);
+        const activeProfileName = sessionState.prompt.profilePath ? path.basename(sessionState.prompt.profilePath) : null;
 
-        let summary, finalImagePrompt, parsedResult = {};
+        let summary;
+        let parsedResult = {};
 
-        if (!skipSummarization) {
-            const activeProfile = JSON.parse(fs.readFileSync(config.prompt.profilePath, 'utf8'));
-            const taskPrompt = buildTaskPrompt({
-                activeProfile,
-                narrativeFrameworkPath,
-                topic: postDetails.topic
-            });
-            try {
-                parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
-            } catch (e) {
-                console.error("[APP-ERROR] Failed to get a valid response from the AI after multiple attempts.", e);
-                parsedResult = { summary: 'Error: Could not parse AI response', imagePrompt: 'A confused robot looking at a computer screen with an error message.' };
-            }
+        const activeProfile = sessionState.prompt;
+        if (!activeProfile || !activeProfile.profilePath) {
+            console.error("[APP-FATAL] The active profile is not set. Please load a profile.");
+            return { success: false };
+        }
+        
+        const promptTopic = skipSummarization ? `Return a JSON object with an imagePrompt and a short, engaging dialogue for a social media post about "${postDetails.topic}". The summary will be the topic itself.` : postDetails.topic;
+
+        const taskPrompt = buildTaskPrompt({
+            activeProfile,
+            narrativeFrameworkPath,
+            topic: promptTopic
+        });
+
+        try {
+            parsedResult = await generateAndParseJsonWithRetry(textGenerator, taskPrompt);
+        } catch (e) {
+            console.error("[APP-ERROR] Failed to get a valid response from the AI after multiple attempts.", e);
+            parsedResult = { summary: 'Error: Could not parse AI response', imagePrompt: 'A confused robot looking at a computer screen with an error message.' };
         }
 
-        summary = parsedResult.summary || postDetails.topic;
-        if (!postDetails.isBatch && !skipSummarization) {
-            summary = await getApprovedInput(summary, 'summary') || summary;
+        if (skipSummarization) {
+            summary = postDetails.topic;
+        } else {
+            summary = parsedResult.summary || postDetails.topic;
+            if (!postDetails.isBatch) {
+                summary = await getApprovedInput(summary, 'summary') || summary;
+            }
         }
 
         const selectedStyle = await selectGraphicStyle();
         if (!selectedStyle) return { success: false, wasCancelled: true };
 
         const { imagePrompt, dialogue } = parsedResult;
-        finalImagePrompt = `${selectedStyle.prompt} ${imagePrompt || summary}`;
+
+        // Determine the base text for the image prompt.
+        // Use imagePrompt if it's a valid string, otherwise fall back to the approved summary.
+        const baseImagePromptText = (typeof imagePrompt === 'string' && imagePrompt.trim().length > 0)
+            ? imagePrompt
+            : summary;
+
+        let finalImagePrompt = `${selectedStyle.prompt} ${baseImagePromptText}`;
 
         if (!postDetails.isBatch && dialogue) {
             finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', false);
@@ -174,14 +204,14 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
 
         console.log(`[APP-INFO] Sending final prompt to image generator...
 `);
-        debugLog(config, `Final Image Prompt: ${finalImagePrompt}`);
+        debugLog(sessionState, `Final Image Prompt: ${finalImagePrompt}`);
         
-        const imageB64 = await generateImageWithRetry(imageGenerator, finalImagePrompt, config, textGenerator);
+        const imageB64 = await generateImageWithRetry(imageGenerator, finalImagePrompt, sessionState, textGenerator);
         const uniqueImageName = `post-image-${Date.now()}.png`;
         const imagePath = path.join(process.cwd(), uniqueImageName);
         fs.writeFileSync(imagePath, Buffer.from(imageB64, 'base64'));
         
-        await applyWatermark(imagePath, config);
+        await applyWatermark(imagePath, sessionState);
 
         console.log(`[APP-SUCCESS] Image created and saved to: ${imagePath}`);
 
@@ -206,17 +236,21 @@ export async function generateAndQueuePost(postDetails, config, imageGenerator, 
     }
 }
 
-export async function generateVirtualInfluencerPost(postDetails, config, imageGenerator, skipSummarization = false, narrativeFrameworkPath) {
-     const textGenerator = getTextGenerator(config);
+export async function generateVirtualInfluencerPost(sessionState, postDetails, imageGenerator, skipSummarization = false) {
+    const narrativeFrameworkPath = sessionState.narrativeFrameworkPath;
+    const textGenerator = getTextGenerator(sessionState);
     try {
-        console.log(`
-[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "${postDetails.topic}"`);
-        const activeProfileName = config.prompt.profilePath ? path.basename(config.prompt.profilePath) : 'virtual_influencer';
+        console.log(`\n[APP-INFO] Starting Two-Phase Virtual Influencer post for topic: "${postDetails.topic}"`);
+        const activeProfileName = sessionState.prompt.profilePath ? path.basename(sessionState.prompt.profilePath) : 'virtual_influencer';
 
         let summary, dialogue, backgroundPrompt, parsedResult = {};
 
         if (!skipSummarization) {
-            const activeProfile = JSON.parse(fs.readFileSync(config.prompt.profilePath, 'utf8'));
+            const activeProfile = sessionState.prompt;
+            if (!activeProfile || !activeProfile.profilePath) {
+                console.error("[APP-FATAL] The active profile is not set. Please load a profile.");
+                return { success: false };
+            }
             const taskPrompt = buildTaskPrompt({
                 activeProfile,
                 narrativeFrameworkPath,
@@ -239,7 +273,7 @@ export async function generateVirtualInfluencerPost(postDetails, config, imageGe
         dialogue = await getApprovedInput(dialogue, 'dialogue') || dialogue;
         backgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt') || backgroundPrompt;
 
-        const framingChoices = [...(config.framingOptions || []), 'Custom...'].map(c => ({name: c, value: c}));
+        const framingChoices = [...(sessionState.framingOptions || []), 'Custom...'].map(c => ({name: c, value: c}));
         const selectedFraming = await select({ message: 'Choose framing:', choices: framingChoices });
         const framingChoice = selectedFraming === 'Custom...' ? await editor({ message: 'Enter custom framing:' }) : selectedFraming;
 
@@ -247,9 +281,9 @@ export async function generateVirtualInfluencerPost(postDetails, config, imageGe
         if (!selectedStyle) return { success: false, wasCancelled: true };
 
         console.log('[APP-INFO] Phase 1: Generating character...');
-        const characterPrompt = `${selectedStyle.prompt} ${config.prompt.characterDescription.replace(/{TOPIC}/g, postDetails.topic)}. ${framingChoice} ...with a speech bubble saying: "${dialogue}". The background should be a solid, neutral light grey.`;
+        const characterPrompt = `${selectedStyle.prompt} ${sessionState.prompt.characterDescription.replace(/{TOPIC}/g, postDetails.topic)}. ${framingChoice} ...with a speech bubble saying: "${dialogue}". The background should be a solid, neutral light grey.`;
         const tempCharacterPath = path.join(process.cwd(), `temp_character_${Date.now()}.png`);
-        const charImageB64 = await generateImageWithRetry(imageGenerator, characterPrompt, config, textGenerator);
+        const charImageB64 = await generateImageWithRetry(imageGenerator, characterPrompt, sessionState, textGenerator);
         fs.writeFileSync(tempCharacterPath, Buffer.from(charImageB64, 'base64'));
         console.log(`[APP-SUCCESS] Phase 1 complete: ${tempCharacterPath}`);
 

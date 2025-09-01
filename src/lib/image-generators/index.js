@@ -21,8 +21,8 @@ try {
  * from the selected provider.
  * @throws {Error} If the configured provider is not supported or fails to load.
  */
-export async function getImageGenerator() {
-    const imageConfig = config.imageGeneration;
+export async function getImageGenerator(sessionState) {
+    const imageConfig = sessionState.imageGeneration;
     const providerName = imageConfig.provider;
 
     if (!providerName || !imageConfig.providers || !imageConfig.providers[providerName]) {
@@ -46,12 +46,16 @@ export async function getImageGenerator() {
                 provider = await import('./gemini-provider.js');
                 break;
             }
+            case 'gemini-flash': {
+                provider = await import('./gemini-flash-provider.js');
+                break;
+            }
             default:
                 throw new Error(`Unsupported image generation provider: "${providerName}". Please check your config.json.`);
         }
 
-        // Return a new function that passes the final, correct configuration to the provider.
-        return (prompt) => provider.generateImage(prompt, finalConfig);
+        // Return the provider's generateImage function directly.
+        return provider.generateImage;
 
     } catch (error) {
         console.error(`[IMAGE-FACTORY-FATAL] Failed to load the "${providerName}" image provider.`, error);

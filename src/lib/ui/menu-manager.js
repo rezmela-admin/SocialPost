@@ -1,15 +1,14 @@
 import { select, Separator } from '@inquirer/prompts';
 import chalk from 'chalk';
 
-export async function menuManager(menu) {
+export async function menuManager(sessionState, menu) {
     const menuStack = [menu];
     let keepGoing = true;
 
     while (keepGoing && menuStack.length > 0) {
         let currentMenu = menuStack[menuStack.length - 1];
         
-        // If the menu is a function, call it to get the dynamic menu object
-        if (typeof currentMenu === 'function') {
+        while (typeof currentMenu === 'function') {
             currentMenu = currentMenu();
         }
 
@@ -33,11 +32,18 @@ export async function menuManager(menu) {
             keepGoing = false;
         } else {
             const selectedChoice = currentMenu.choices.find(c => c.value === action);
-            if (selectedChoice && selectedChoice.submenu) {
-                menuStack.push(selectedChoice.submenu);
-            } else if (selectedChoice && selectedChoice.action) {
-                await selectedChoice.action();
-                if (selectedChoice.popAfterAction) {
+            
+            if (selectedChoice) {
+                // Step 1: Execute the action if it exists.
+                if (selectedChoice.action) {
+                    await selectedChoice.action();
+                }
+                // Step 2: Push the submenu if it exists.
+                if (selectedChoice.submenu) {
+                    menuStack.push(selectedChoice.submenu);
+                }
+                // Step 3: Pop after action if specified (and no submenu).
+                if (selectedChoice.popAfterAction && !selectedChoice.submenu) {
                     menuStack.pop();
                 }
             }

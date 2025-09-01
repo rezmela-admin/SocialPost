@@ -97,10 +97,10 @@ async function openaiRequestWithRetry(apiCall) {
 /**
  * Generates an image using the OpenAI DALL-E API.
  * @param {string} prompt The text prompt for the image.
- * @param {object} options The image generation options from config.json (includes model, size, etc.).
+ * @param {object} config The full application configuration object.
  * @returns {Promise<string>} A Promise that resolves to the Base64 encoded image string.
  */
-export async function generateImage(prompt, options) {
+export async function generateImage(prompt, sessionState) {
     if (!process.env.OPENAI_API_KEY) {
         throw new Error("[OPENAI-PROVIDER-FATAL] OpenAI API key is not configured. Please check your .env file or .gemini/settings.json.");
     }
@@ -110,7 +110,8 @@ export async function generateImage(prompt, options) {
         openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     }
 
-    const imageRequest = buildImageRequest(prompt, options.size, options);
+    const providerConfig = sessionState.imageGeneration.providers.openai;
+    const imageRequest = buildImageRequest(prompt, providerConfig.size, providerConfig);
     
     // The core API call.
     const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));

@@ -23,15 +23,13 @@ function getAvailableLayouts(panelCount) {
  * Composes a comic strip from individual panel images.
  * @param {Array<string>} panelImagePaths - Array of absolute paths to the panel images.
  * @param {string} layout - The selected layout string (e.g., '2x2').
- * @param {object} config - The global application configuration.
+ * @param {number} panelWidth - The width of a single panel.
+ * @param {number} panelHeight - The height of a single panel.
+ * @param {number} borderSize - The size of the border around panels.
  * @returns {Promise<string>} - The absolute path to the final composed image.
  */
-async function composeComicStrip(panelImagePaths, layout, config) {
+async function composeComicStrip(panelImagePaths, layout, panelWidth, panelHeight, borderSize) {
     const [cols, rows] = layout.split('x').map(Number);
-    const activeProvider = config.imageGeneration.provider;
-    const providerConfig = config.imageGeneration.providers[activeProvider];
-    const [panelWidth, panelHeight] = providerConfig.size.split('x').map(Number);
-    const borderSize = config.imageGeneration.comicBorderSize || 10;
 
     const finalWidth = (cols * panelWidth) + ((cols + 1) * borderSize);
     const finalHeight = (rows * panelHeight) + ((rows + 1) * borderSize);

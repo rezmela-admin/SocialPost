@@ -9,6 +9,7 @@ import { generateAndQueueComicStrip, generateAndQueuePost, generateVirtualInflue
 import { getAvailableLayouts } from '../comic-composer.js';
 import { displayBanner } from './banner.js';
 import { buildFrameworksMenu } from './framework-selector.js';
+import { editTopic } from './topic-editor.js';
 
 function getLoggedInPlatforms() {
     const loggedIn = [];
@@ -33,55 +34,57 @@ async function runWorker() {
     });
 }
 
-function generatePostMenu(config, imageGenerator) {
-    const postDetails = {
-        topic: config.search.defaultTopic,
-        platforms: [],
-        skipSummarization: false,
-        comicLayout: null
-    };
-
+function generatePostMenu(sessionState, imageGenerator) {
+    // This menu is now STATELESS. It reads from and writes to sessionState.draftPost.
     return () => {
+        const draft = sessionState.draftPost;
+
         const menu = {
             title: 'Generate New Post',
             message: 'Configure the post details:',
             choices: [
                 {
-                    name: `Set Topic (Current: ${postDetails.topic})`,
+                    name: `Set Topic (Current: ${draft.topic})`,
                     value: 'setTopic',
                     action: async () => {
-                        postDetails.topic = await editor({ message: 'Enter the topic:', default: postDetails.topic, validate: input => input.trim().length > 0 });
+                        const newTopic = await editTopic(draft.topic);
+                        if (newTopic) {
+                            draft.topic = newTopic;
+                        }
                     }
                 },
                 {
-                    name: `Select Platforms (Current: ${postDetails.platforms.join(', ') || 'None'})`,
+                    name: `Select Platforms (Current: ${draft.platforms.join(', ') || 'None'})`,
                     value: 'selectPlatforms',
                     action: async () => {
-                        postDetails.platforms = await checkbox({ message: 'Queue for which platforms?', choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}], default: postDetails.platforms, validate: i => i.length > 0 });
+                        draft.platforms = await checkbox({ message: 'Queue for which platforms?', choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}], default: draft.platforms, validate: i => i.length > 0 });
                     }
                 }
             ]
         };
 
-        if (config.prompt.workflow === 'comicStrip') {
-            const expectedPanelCount = config.prompt.expectedPanelCount || 4; // Default to 4 if not specified
+        const activeProfile = sessionState.prompt;
+        const isComicWorkflow = activeProfile.hasOwnProperty('expectedPanelCount');
+
+        if (isComicWorkflow) {
+            const expectedPanelCount = activeProfile.expectedPanelCount || 4;
             const availableLayouts = getAvailableLayouts(expectedPanelCount);
             
-            // Set a default layout if not already set
-            if (!postDetails.comicLayout && availableLayouts.length > 0) {
-                postDetails.comicLayout = availableLayouts[0].value;
+            if (!draft.comicLayout && availableLayouts.length > 0) {
+                draft.comicLayout = availableLayouts[0].value;
             }
 
             menu.choices.push({
-                name: `Select Layout (Current: ${postDetails.comicLayout || 'None'})`,
+                name: `Select Layout (Current: ${draft.comicLayout || 'None'})`,
                 value: 'selectLayout',
                 action: async () => {
                     if (availableLayouts.length === 0) {
-                        console.log(chalk.red(`\n[APP-ERROR] No layouts available for a ${expectedPanelCount}-panel comic. Please check your profile.`));
+                        console.log(chalk.red(`
+[APP-ERROR] No layouts available for a ${expectedPanelCount}-panel comic. Please check your profile.`));
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         return;
                     }
-                    postDetails.comicLayout = await select({
+                    draft.comicLayout = await select({
                         message: 'Choose a comic strip layout:',
                         choices: availableLayouts
                     });
@@ -89,10 +92,10 @@ function generatePostMenu(config, imageGenerator) {
             });
         } else {
             menu.choices.push({
-                name: `Use Topic as Summary (Current: ${postDetails.skipSummarization})`,
+                name: `Use Topic as Summary (Current: ${draft.skipSummarization})`,
                 value: 'toggleSkipSummarization',
                 action: async () => {
-                    postDetails.skipSummarization = await confirmPrompt({ message: 'Use this topic directly as the post summary?', default: postDetails.skipSummarization });
+                    draft.skipSummarization = await confirmPrompt({ message: 'Use this topic directly as the post summary?', default: draft.skipSummarization });
                 }
             });
         }
@@ -101,25 +104,28 @@ function generatePostMenu(config, imageGenerator) {
             name: 'Confirm and Generate Post',
             value: 'generate',
             action: async () => {
-                if (!postDetails.topic || postDetails.platforms.length === 0) {
-                    console.log(chalk.red('\n[APP-ERROR] Topic and at least one platform must be set before generating.'));
+                if (!draft.topic || draft.platforms.length === 0) {
+                    console.log(chalk.red(`
+[APP-ERROR] Topic and at least one platform must be set before generating.`));
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     return;
                 }
-                if (config.prompt.workflow === 'comicStrip' && !postDetails.comicLayout) {
-                    console.log(chalk.red('\n[APP-ERROR] A comic strip layout must be selected before generating.'));
+                if (isComicWorkflow && !draft.comicLayout) {
+                    console.log(chalk.red(`
+[APP-ERROR] A comic strip layout must be selected before generating.`));
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     return;
                 }
                 const confirmed = await confirmPrompt({ message: 'Proceed with generating this post?', default: true });
                 if (confirmed) {
-                    if (config.prompt.workflow === 'comicStrip') {
-                        await generateAndQueueComicStrip(postDetails, config, imageGenerator, config.narrativeFrameworkPath);
-                    } else if (config.prompt.workflow === 'virtualInfluencer') {
-                        await generateVirtualInfluencerPost(postDetails, config, imageGenerator, postDetails.skipSummarization, config.narrativeFrameworkPath);
+                    if (isComicWorkflow) {
+                        await generateAndQueueComicStrip(sessionState, draft, imageGenerator);
+                    } else if (sessionState.prompt.workflow === 'virtualInfluencer') {
+                        await generateVirtualInfluencerPost(sessionState, draft, imageGenerator, draft.skipSummarization);
                     } else {
-                        await generateAndQueuePost(postDetails, config, imageGenerator, postDetails.skipSummarization, config.narrativeFrameworkPath);
+                        await generateAndQueuePost(sessionState, draft, imageGenerator, draft.skipSummarization);
                     }
+                    sessionState.draftPost = null; // Clean up draft state
                 } else {
                     console.log('[APP-INFO] Post generation cancelled.');
                 }
@@ -150,21 +156,21 @@ async function clearJobQueueAndCleanupFiles() {
     }
 }
 
-export function mainMenu(config, imageGenerator) {
-    if (config.displaySettings && config.displaySettings.showBannerOnStartup) {
+export function mainMenu(sessionState, imageGenerator) {
+    if (sessionState.displaySettings && sessionState.displaySettings.showBannerOnStartup) {
         displayBanner();
-        config.displaySettings.showBannerOnStartup = false; // Only show once
+        sessionState.displaySettings.showBannerOnStartup = false; // Only show once
     }
 
     return () => {
-        const activeProfile = config.prompt.profilePath ? path.basename(config.prompt.profilePath, '.json') : '<None Selected>';
-        const activeFramework = config.narrativeFrameworkPath ? path.basename(config.narrativeFrameworkPath, '.json') : '<None Selected>';
+        const activeProfile = sessionState.prompt.profilePath ? path.basename(sessionState.prompt.profilePath, '.json') : '<None Selected>';
+        const activeFramework = sessionState.narrativeFrameworkPath ? path.basename(sessionState.narrativeFrameworkPath, '.json') : '<None Selected>';
         const loggedInPlatforms = getLoggedInPlatforms();
         const pendingJobs = getPendingJobCount();
         const anyJobs = getAnyJobCount();
         const hasOrphanedImages = fs.readdirSync(process.cwd()).some(f => f.startsWith('post-image-') || f.startsWith('comic-strip-'));
 
-        console.log(chalk.yellow(`\n--- Status ---`));
+        console.log(chalk.yellow(`\n--- Status ---\n`));
         console.log(`- Active Profile:      ${chalk.cyan(activeProfile)}`);
         console.log(`- Narrative Framework: ${chalk.cyan(activeFramework)}`);
         console.log(`- Logged In:           ${chalk.cyan(loggedInPlatforms.length > 0 ? loggedInPlatforms.join(', ') : 'None')}`);
@@ -175,9 +181,25 @@ export function mainMenu(config, imageGenerator) {
             title: 'Main Menu',
             message: 'What would you like to do?',
             choices: [
-                { name: 'Select Narrative Framework', value: 'selectNarrativeFramework', submenu: buildFrameworksMenu(config) },
-                { name: 'Generate and Queue a New Post', value: 'generateAndQueueNewPost', submenu: generatePostMenu(config, imageGenerator) },
-                { name: 'Manage Creative Profiles', value: 'manageCreativeProfiles', action: () => manageCreativeProfiles(config) },
+                { name: 'Select Narrative Framework', value: 'selectNarrativeFramework', submenu: buildFrameworksMenu(sessionState) },
+                { 
+                    name: 'Generate and Queue a New Post', 
+                    value: 'generateAndQueueNewPost', 
+                    action: () => {
+                        // Initialize the draft state before entering the submenu
+                        sessionState.draftPost = {
+                            topic: sessionState.search.defaultTopic,
+                            platforms: [],
+                            skipSummarization: false,
+                            comicLayout: null
+                        };
+                    },
+                    submenu: () => generatePostMenu(sessionState, imageGenerator) 
+                }, 
+                { name: 'Manage Creative Profiles', value: 'manageCreativeProfiles', action: async () => {
+                    const newSessionState = await manageCreativeProfiles(sessionState);
+                    Object.assign(sessionState, newSessionState);
+                } },
             ]
         };
 
