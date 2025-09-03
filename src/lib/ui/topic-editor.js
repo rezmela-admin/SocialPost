@@ -1,8 +1,19 @@
 import { editor, select } from '@inquirer/prompts';
 
-export async function editTopic(initialTopic) {
+export async function editTopic(initialTopic, options = {}) {
     let currentTopic = initialTopic;
     let isEditing = true;
+
+    if (options.startInEditMode) {
+        const newTopic = await editor({
+            message: 'Edit the topic:',
+            default: currentTopic,
+            validate: input => input.trim().length > 0
+        });
+        // If the user cancels the editor, the prompt throws, which is handled by the main app loop.
+        // If they submit, we update the topic and proceed to the approval loop.
+        currentTopic = newTopic;
+    }
 
     while (isEditing) {
         const choice = await select({

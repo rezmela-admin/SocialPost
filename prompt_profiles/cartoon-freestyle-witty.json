@@ -1,3 +1,3 @@
 {
-  "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly two string keys: 'summary' (a short, witty summary of the news) and 'imagePrompt' (a detailed visual description for an AI image generator based on the news)."
+  "task": "Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. Do not include markdown ticks ```json or any other explanatory text. The JSON object must have exactly three string keys:\n1. 'summary': A short, witty summary of the news.\n2. 'imagePrompt': A detailed visual description for a SINGLE-PANEL cartoon. DO NOT describe multiple panels. The description must focus on a single, symbolic scene.\n3. 'dialogue': A short, witty comment for a single speech bubble. This key is mandatory."
 }

@@ -15,7 +15,8 @@ import {
     generateImageWithRetry, 
     selectGraphicStyle,
     promptForSpeechBubble,
-    getPanelApproval
+    getPanelApproval,
+    getPostApproval
 } from './utils.js';
 
 export async function generateAndQueueComicStrip(sessionState, postDetails, imageGenerator) {
@@ -184,8 +185,6 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
 
         const { imagePrompt, dialogue } = parsedResult;
 
-        // Determine the base text for the image prompt.
-        // Use imagePrompt if it's a valid string, otherwise fall back to the approved summary.
         const baseImagePromptText = (typeof imagePrompt === 'string' && imagePrompt.trim().length > 0)
             ? imagePrompt
             : summary;
@@ -195,22 +194,43 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
         if (!postDetails.isBatch && dialogue) {
             finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', false);
         } else if (dialogue && dialogue.trim() !== '') {
-            finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}"`;
+            finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}" using large, bold, high-contrast lettering sized for easy reading on mobile devices; ensure all text is fully visible and not cut off`;
         }
 
         if (!postDetails.isBatch) {
             finalImagePrompt = await getApprovedInput(finalImagePrompt, 'image prompt') || finalImagePrompt;
         }
+        
+        sessionState.finalImagePrompt = finalImagePrompt;
 
-        console.log(`[APP-INFO] Sending final prompt to image generator...
-`);
-        debugLog(sessionState, `Final Image Prompt: ${finalImagePrompt}`);
-        
-        const imageB64 = await generateImageWithRetry(imageGenerator, finalImagePrompt, sessionState, textGenerator);
-        const uniqueImageName = `post-image-${Date.now()}.png`;
-        const imagePath = path.join(process.cwd(), uniqueImageName);
-        fs.writeFileSync(imagePath, Buffer.from(imageB64, 'base64'));
-        
+        // Approval-driven generation loop: regenerate on Retry/Edit
+        let currentPrompt = finalImagePrompt;
+        let imagePath;
+        while (true) {
+            console.log(`[APP-INFO] Sending final prompt to image generator...\n`);
+            debugLog(sessionState, `Final Image Prompt: ${currentPrompt}`);
+
+            const imageB64 = await generateImageWithRetry(imageGenerator, currentPrompt, sessionState, textGenerator);
+            const uniqueImageName = `post-image-${Date.now()}.png`;
+            imagePath = path.join(process.cwd(), uniqueImageName);
+            fs.writeFileSync(imagePath, Buffer.from(imageB64, 'base64'));
+
+            const approval = await getPostApproval(imagePath, sessionState);
+            if (approval?.decision === 'approve') {
+                break;
+            }
+            if (approval?.decision === 'cancel') {
+                console.log('[APP-INFO] Post generation cancelled by user.');
+                return { success: false, wasCancelled: true };
+            }
+            // retry path: optionally with edited prompt
+            try { fs.unlinkSync(imagePath); } catch {}
+            if (approval?.editedPrompt && approval.editedPrompt.trim()) {
+                currentPrompt = approval.editedPrompt.trim();
+                sessionState.finalImagePrompt = currentPrompt;
+            }
+        }
+
         await applyWatermark(imagePath, sessionState);
 
         console.log(`[APP-SUCCESS] Image created and saved to: ${imagePath}`);

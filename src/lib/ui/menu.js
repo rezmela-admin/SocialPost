@@ -13,9 +13,15 @@ import { editTopic } from './topic-editor.js';
 
 function getLoggedInPlatforms() {
     const loggedIn = [];
+    // X and LinkedIn use persisted session state files
     if (fs.existsSync(path.join(process.cwd(), 'x_session.json'))) loggedIn.push('X');
     if (fs.existsSync(path.join(process.cwd(), 'linkedin_session.json'))) loggedIn.push('LinkedIn');
-    if (fs.existsSync(path.join(process.cwd(), 'bluesky_credentials.json'))) loggedIn.push('Bluesky');
+    // Bluesky uses env vars in the worker; fall back to credentials file if present
+    if (process.env.BLUESKY_HANDLE && process.env.BLUESKY_APP_PASSWORD) {
+        loggedIn.push('Bluesky');
+    } else if (fs.existsSync(path.join(process.cwd(), 'bluesky_credentials.json'))) {
+        loggedIn.push('Bluesky');
+    }
     return loggedIn;
 }
 
@@ -47,7 +53,7 @@ function generatePostMenu(sessionState, imageGenerator) {
                     name: `Set Topic (Current: ${draft.topic})`,
                     value: 'setTopic',
                     action: async () => {
-                        const newTopic = await editTopic(draft.topic);
+                        const newTopic = await editTopic(draft.topic, { startInEditMode: true });
                         if (newTopic) {
                             draft.topic = newTopic;
                         }
@@ -142,7 +148,11 @@ async function clearJobQueueAndCleanupFiles() {
     if (confirmed) {
         clearQueue();
         const files = fs.readdirSync(process.cwd());
-        const imageFiles = files.filter(f => f.startsWith('post-image-') || f.startsWith('comic-strip-'));
+        const imageFiles = files.filter(f =>
+            f.startsWith('post-image-') ||
+            f.startsWith('comic-strip-') ||
+            f.startsWith('final-comic-')
+        );
         let deletedCount = 0;
         for (const file of imageFiles) {
             try {
@@ -168,14 +178,19 @@ export function mainMenu(sessionState, imageGenerator) {
         const loggedInPlatforms = getLoggedInPlatforms();
         const pendingJobs = getPendingJobCount();
         const anyJobs = getAnyJobCount();
-        const hasOrphanedImages = fs.readdirSync(process.cwd()).some(f => f.startsWith('post-image-') || f.startsWith('comic-strip-'));
+        const hasOrphanedImages = fs.readdirSync(process.cwd()).some(f =>
+            f.startsWith('post-image-') || f.startsWith('comic-strip-') || f.startsWith('final-comic-')
+        );
 
-        console.log(chalk.yellow(`\n--- Status ---\n`));
+        console.log(chalk.yellow(`
+--- Status ---
+`));
         console.log(`- Active Profile:      ${chalk.cyan(activeProfile)}`);
         console.log(`- Narrative Framework: ${chalk.cyan(activeFramework)}`);
         console.log(`- Logged In:           ${chalk.cyan(loggedInPlatforms.length > 0 ? loggedInPlatforms.join(', ') : 'None')}`);
         console.log(`- Pending Jobs:        ${chalk.cyan(pendingJobs)}`);
-        console.log(chalk.yellow(`----------------\n`));
+        console.log(chalk.yellow(`----------------
+`));
 
         const menu = {
             title: 'Main Menu',
@@ -185,16 +200,33 @@ export function mainMenu(sessionState, imageGenerator) {
                 { 
                     name: 'Generate and Queue a New Post', 
                     value: 'generateAndQueueNewPost', 
-                    action: () => {
-                        // Initialize the draft state before entering the submenu
+                    action: async () => {
+                        // Initialize the draft state
                         sessionState.draftPost = {
                             topic: sessionState.search.defaultTopic,
                             platforms: [],
                             skipSummarization: false,
                             comicLayout: null
                         };
+                        // Immediately open the editor
+                        const newTopic = await editTopic(sessionState.draftPost.topic, { startInEditMode: true });
+                        if (newTopic) {
+                            sessionState.draftPost.topic = newTopic;
+                        } else {
+                            // User cancelled the editor, so we clear the draft to prevent the submenu from opening.
+                            sessionState.draftPost = null; 
+                        }
                     },
-                    submenu: () => generatePostMenu(sessionState, imageGenerator) 
+                    submenu: () => {
+                        // Only return the submenu if a draft post exists (i.e., the user didn't cancel the topic editor)
+                        if (sessionState.draftPost) {
+                            // We no longer need the "Set Topic" option here, as it's been handled.
+                            const menu = generatePostMenu(sessionState, imageGenerator)();
+                            menu.choices = menu.choices.filter(c => c.value !== 'setTopic');
+                            return menu;
+                        }
+                        return null;
+                    } 
                 }, 
                 { name: 'Manage Creative Profiles', value: 'manageCreativeProfiles', action: async () => {
                     const newSessionState = await manageCreativeProfiles(sessionState);

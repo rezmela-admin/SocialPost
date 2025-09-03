@@ -39,6 +39,44 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
     throw lastError;
 }
 
+export async function getPostApproval(imagePath, sessionState) {
+    // Open the image once for review, then return a decision for the caller to act on.
+    try {
+        await open(pathToFileURL(imagePath).href);
+    } catch (error) {
+        console.warn(`[APP-WARN] Could not automatically open the image. Please open it manually: ${imagePath}`);
+    }
+
+    process.stdin.resume();
+    const action = await select({
+        message: 'Image should have opened for review. What would you like to do?',
+        choices: [
+            { name: 'Approve', value: 'Approve' },
+            { name: 'Retry', value: 'Retry' },
+            { name: 'Edit Prompt', value: 'Edit' },
+            { name: 'Cancel', value: 'Cancel' }
+        ]
+    });
+
+    if (action === 'Approve') {
+        return { decision: 'approve' };
+    }
+    if (action === 'Retry') {
+        return { decision: 'retry' };
+    }
+    if (action === 'Edit') {
+        const editedPrompt = await editor({
+            message: 'Edit the prompt for this image:',
+            default: sessionState.finalImagePrompt,
+        });
+        sessionState.finalImagePrompt = editedPrompt;
+        return { decision: 'retry', editedPrompt };
+    }
+    // Cancel
+    try { fs.unlinkSync(imagePath); } catch {}
+    return { decision: 'cancel' };
+}
+
 export async function getPanelApproval(panel, panelIndex, imageGenerator, config, textGenerator, selectedStyle, characterLibrary, totalPanels) {
     let approvedImagePath = null;
     let userAction = '';
@@ -65,7 +103,7 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
 
     if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
         const dialogueText = panel.dialogue.map(d => `${d.character} says: '${d.speech}'`).join('; ');
-        promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. ${dialogueText}. The text must be clear, fully visible, and not cut off.`);
+        promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure the dialogue text is clear, fully visible, and not cut off. ${dialogueText}.`);
     }
     
     let panelPrompt = promptParts.join(' ');
@@ -142,15 +180,26 @@ export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }
         }
     }
 
-    // Extract panel count from the task description.
+    // Decide whether to include multi-panel guidance based on profile.
+    const explicitPanelCount = typeof activeProfile.expectedPanelCount === 'number' ? activeProfile.expectedPanelCount : null;
     const panelCountMatch = activeProfile.task.match(/(\w+)-panel comic strip/);
-    const panelCountText = panelCountMatch ? panelCountMatch[1] : 'four'; // Default to four if not found
+    const panelCountTextFromTask = panelCountMatch ? panelCountMatch[1] : null;
+
+    let guidanceTail;
+    if (explicitPanelCount) {
+        guidanceTail = `Now, generate the ${explicitPanelCount}-panel comic strip based on the user's topic.`;
+    } else if (panelCountTextFromTask) {
+        guidanceTail = `Now, generate the ${panelCountTextFromTask}-panel comic strip based on the user's topic.`;
+    } else {
+        // Single-panel or generic cartoon; avoid multi-panel phrasing.
+        guidanceTail = `Now, generate the cartoon based on the user's topic.`;
+    }
 
     const characterConsistencyInstruction = `
-CRITICAL INSTRUCTION: Before generating the panel details, you must first establish a consistent voice and personality for each character in the story.
+CRITICAL INSTRUCTION: Before generating the details, you must first establish a consistent voice and personality for each character in the story.
 1. For well-known public figures: Use your internal knowledge to accurately model their famous speech patterns, cadence, and vocabulary.
-2. For all other characters (original or lesser-known): You must invent a distinct and consistent persona for them. Define their speaking style, and then adhere strictly to that definition to ensure continuity across all panels.
-This is a mandatory first step. Now, generate the ${panelCountText}-panel comic strip based on the user's topic.
+2. For all other characters (original or lesser-known): You must invent a distinct and consistent persona for them. Define their speaking style, and then adhere strictly to that definition to ensure continuity.
+${guidanceTail}
 `;
         
     return `${characterConsistencyInstruction}\n\n${taskPrompt}`;
@@ -179,7 +228,7 @@ export async function getApprovedInput(text, inputType) {
         if (action === 'Cancel') return null;
         if (action === 'Edit') {
             const editedText = await editor({
-                message: `Editing ${inputType}. Save and close your editor to continue.`, 
+                message: `Editing ${inputType}. Save and close your editor to continue.`,
                 default: currentText,
                 validate: input => input.trim().length > 0 || `Edited ${inputType} cannot be empty.`,
             });
@@ -199,9 +248,9 @@ export async function promptForSpeechBubble(initialPrompt, dialogue, isVirtualIn
     });
     
     if (isVirtualInfluencer) {
-        return `${initialPrompt} A rectangular dialogue box near the character contains the text: "${speechBubbleText}".`;
+        return `${initialPrompt} A rectangular dialogue box near the character contains the text: "${speechBubbleText}". Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure all text is fully visible and not cut off.`;
     } else {
-        return `${initialPrompt}, with a rectangular dialogue box containing the text: "${speechBubbleText}".`;
+        return `${initialPrompt}, with a rectangular dialogue box containing the text: "${speechBubbleText}". Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure all text is fully visible and not cut off.`;
     }
 }
 

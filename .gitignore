@@ -51,3 +51,4 @@ Thumbs.db
 /backups/
 /plans/Error.txt
 final-comic-*.pdf
+\n# Ignore post archives and temporary files\npost_archive/\npost-image-*.pdf\nError.txt\nCOMMIT_MESSAGE.txt

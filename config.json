@@ -50,7 +50,7 @@
     "task": "You are a political cartoonist creating a single-panel cartoon with multiple characters from a predefined library. Based on the news about '{TOPIC}', you must respond with ONLY a single, raw JSON object. The object must contain exactly three keys:\n1. 'summary': A neutral, factual summary of the news topic, under 280 characters.\n2. 'sceneDescription': A detailed description of the background, setting, and character positions for the cartoon panel.\n3. 'characters': An array of JSON objects. Each object represents a character and must have two string keys: 'character' (which MUST be an exact key from the provided character library: {CHARACTER_KEYS}) and 'dialogue' (the exact words in their speech bubble, under 20 words).\nDo not include markdown ticks or any other explanatory text."
   },
   "imageGeneration": {
-    "provider": "gemini-flash",
+    "provider": "gemini",
     "providers": {
       "openai": {
         "model": "gpt-image-1",
@@ -102,15 +102,16 @@
   ],
   "debug": {
     "enabled": true,
-    "preserveTemporaryFiles": true
+    "preserveTemporaryFiles": false
   },
   "displaySettings": {
     "showBannerOnStartup": true
   },
   "timezone": "America/New_York",
   "postProcessing": {
-    "actionAfterSuccess": "delete",
-    "backupFolderPath": "./post_backups"
+    "actionAfterSuccess": "archive",
+    "backupFolderPath": "./post_backups",
+    "archiveFolderPath": "./post_archive"
   },
   "worker": {
     "exitAfterSingleJob": true

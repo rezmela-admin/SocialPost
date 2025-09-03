@@ -50,10 +50,22 @@ export async function applyWatermark(imagePath, config) {
         const svgBuffer = Buffer.from(svg);
         const tempImagePath = `${imagePath}.watermarked.png`;
 
+        // Map position from config to Sharp gravity
+        const gravityMap = {
+            'bottom-right': 'southeast',
+            'bottom-left': 'southwest',
+            'top-right': 'northeast',
+            'top-left': 'northwest',
+            'center': 'centre',
+            'bottom-center': 'south',
+            'top-center': 'north'
+        };
+        const gravity = gravityMap[wmConfig.position] || 'southeast';
+
         await image
             .composite([{ 
                 input: svgBuffer, 
-                gravity: 'southeast',
+                gravity,
             }])
             .toFile(tempImagePath);
 

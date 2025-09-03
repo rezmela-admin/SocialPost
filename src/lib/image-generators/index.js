@@ -1,16 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-
-// Load configuration synchronously at module load time.
-// This is generally safe for CLI applications on startup.
-let config;
-try {
-    config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
-} catch (error) {
-    console.error("[IMAGE-FACTORY-FATAL] Failed to load or parse config.json. Please ensure it exists and is valid.", error);
-    // If config fails to load, the application cannot proceed.
-    process.exit(1);
-}
+// Image generator factory relies on the provided session state.
 
 /**
  * Dynamically imports and returns the image generation function from the configured provider.

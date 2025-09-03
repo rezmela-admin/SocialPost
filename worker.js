@@ -14,6 +14,68 @@ import sharp from 'sharp';
 
 const QUEUE_FILE_PATH = path.join(process.cwd(), 'post_queue.json');
 
+// --- Archiving Helpers ---
+function toSlug(text, maxLen = 80) {
+    if (!text) return 'untitled';
+    return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-_]/g, '')
+        .trim()
+        .replace(/[\s_-]+/g, '-')
+        .slice(0, maxLen) || 'untitled';
+}
+
+async function archivePostedAsset(job, absoluteImagePath, config, errors) {
+    try {
+        const root = config.postProcessing?.archiveFolderPath || './post_archive';
+        const created = job.createdAt ? new Date(job.createdAt) : new Date();
+        const yyyy = String(created.getFullYear());
+        const mm = String(created.getMonth() + 1).padStart(2, '0');
+        const dd = String(created.getDate()).padStart(2, '0');
+        const profile = (job.profile || 'default').toString().replace(/[^a-zA-Z0-9_-]/g, '_');
+        const topicSlug = toSlug(job.topic, 80);
+        const jobDir = path.join(root, yyyy, mm, dd, profile, `${job.id}_${topicSlug}`);
+        await fsPromises.mkdir(jobDir, { recursive: true });
+
+        // Move image
+        const imageExt = path.extname(absoluteImagePath) || '.png';
+        const destImagePath = path.join(jobDir, `image${imageExt}`);
+        await fsPromises.rename(absoluteImagePath, destImagePath);
+
+        // Move optional PDF (same basename, .pdf)
+        const pdfCandidate = absoluteImagePath.replace(/\.[^.]+$/, '.pdf');
+        try {
+            await fsPromises.access(pdfCandidate);
+            const destPdfPath = path.join(jobDir, 'image.pdf');
+            await fsPromises.rename(pdfCandidate, destPdfPath);
+        } catch (_) {
+            // no pdf present
+        }
+
+        // Write metadata
+        const metadata = {
+            id: job.id,
+            topic: job.topic,
+            summary: job.summary,
+            platforms: job.platforms,
+            profile: job.profile,
+            createdAt: job.createdAt,
+            processedAt: job.processedAt || new Date().toISOString(),
+            status: 'completed',
+            errors: errors || [],
+            files: {
+                image: path.basename(destImagePath),
+                pdf: 'image.pdf'
+            },
+            archiveVersion: 1
+        };
+        await fsPromises.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+        console.log(`[WORKER-INFO] Archived job ${job.id} to: ${jobDir}`);
+    } catch (e) {
+        console.warn(`[WORKER-WARN] Failed to archive job ${job.id}:`, e.message);
+    }
+}
+
 // --- Configuration Loading ---
 async function loadConfig() {
     try {
@@ -178,6 +240,7 @@ async function processJob(job, config) {
 
     let overallSuccess = true;
     const errors = [];
+    let browser = null; // Reuse a single browser for all non-Bluesky platforms
 
     for (const platformName of job.platforms) {
         try {
@@ -186,26 +249,24 @@ async function processJob(job, config) {
                 await postToBluesky(job, config);
             } else {
                 // This is a browser-based platform
-                let browser = null;
-                try {
-                    const sessionFilePath = path.join(process.cwd(), `${platformName.toLowerCase()}_session.json`);
-                    const platformConfig = config.socialMedia[platformName];
-                    if (!platformConfig || !platformConfig.selectors) {
-                        throw new Error(`Configuration for platform "${platformName}" is missing or incomplete.`);
-                    }
-                    if (!config.timeouts) {
-                        throw new Error(`'timeouts' configuration is missing from config.json.`);
-                    }
-                    if (!fs.existsSync(sessionFilePath)) {
-                        throw new Error(`Session file for ${platformName} not found. Please log in first.`);
-                    }
-                    browser = await chromium.launch({ headless: false });
-                    const context = await browser.newContext({ storageState: sessionFilePath });
-                    const page = await context.newPage();
-                    await postToPlatform(page, job, platformConfig, config.timeouts);
-                } finally {
-                    if (browser) await browser.close();
+                const sessionFilePath = path.join(process.cwd(), `${platformName.toLowerCase()}_session.json`);
+                const platformConfig = config.socialMedia[platformName];
+                if (!platformConfig || !platformConfig.selectors) {
+                    throw new Error(`Configuration for platform "${platformName}" is missing or incomplete.`);
                 }
+                if (!config.timeouts) {
+                    throw new Error(`'timeouts' configuration is missing from config.json.`);
+                }
+                if (!fs.existsSync(sessionFilePath)) {
+                    throw new Error(`Session file for ${platformName} not found. Please log in first.`);
+                }
+                if (!browser) {
+                    browser = await chromium.launch({ headless: false });
+                }
+                const context = await browser.newContext({ storageState: sessionFilePath });
+                const page = await context.newPage();
+                await postToPlatform(page, job, platformConfig, config.timeouts);
+                await context.close();
             }
             console.log(`[WORKER-SUCCESS] Successfully posted to ${platformName}.`);
         } catch (error) {
@@ -215,9 +276,13 @@ async function processJob(job, config) {
         }
     }
 
+    if (browser) {
+        try { await browser.close(); } catch {}
+    }
+
     // Re-read the queue, find the job, and update its final status
     queue = JSON.parse(await fsPromises.readFile(QUEUE_FILE_PATH, 'utf8'));
-    const jobToUpdate = queue.find(j => j.id === job.id);
+    let jobToUpdate = queue.find(j => j.id === job.id);
     if (jobToUpdate) {
         jobToUpdate.status = overallSuccess ? 'completed' : 'failed';
         jobToUpdate.errors = errors;
@@ -237,6 +302,8 @@ async function processJob(job, config) {
                 const backupPath = path.join(backupDir, path.basename(job.imagePath));
                 await fsPromises.rename(absoluteImagePath, backupPath);
                 console.log(`[WORKER-INFO] Image for job ${job.id} backed up to: ${backupPath}`);
+            } else if (action === 'archive') {
+                await archivePostedAsset(jobToUpdate || job, absoluteImagePath, config, errors);
             } else {
                 await fsPromises.unlink(absoluteImagePath);
                 console.log(`[WORKER-INFO] Image for job ${job.id} deleted.`);

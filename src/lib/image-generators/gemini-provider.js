@@ -1,19 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
-import fs from 'fs';
+import { debugLog as appDebugLog } from '../utils.js';
 
 // Note: The GoogleGenAI client is now initialized inside the generateImage function.
 let ai;
-
-function debugLog(message) {
-    try {
-        const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
-        if (config.debug && config.debug.enabled) {
-            console.log(`[GEMINI-PROVIDER-DEBUG] ${message}`);
-        }
-    } catch (error) {
-        // Ignore if config doesn't exist
-    }
-}
 
 export async function generateImage(prompt, sessionState) {
     if (!process.env.GEMINI_API_KEY) {
@@ -27,7 +16,7 @@ export async function generateImage(prompt, sessionState) {
 
     const providerConfig = sessionState.imageGeneration.providers.gemini;
     const model = providerConfig.model;
-    debugLog(`Gemini SDK Request: Model=${model}, Prompt="${prompt}"`);
+    appDebugLog(sessionState, `[GEMINI-PROVIDER-DEBUG] Gemini SDK Request: Model=${model}, Prompt="${prompt}"`);
 
     try {
         const payload = {
@@ -38,7 +27,7 @@ export async function generateImage(prompt, sessionState) {
             },
         };
         
-        debugLog(`Payload: ${JSON.stringify(payload, null, 2)}`);
+        appDebugLog(sessionState, `[GEMINI-PROVIDER-DEBUG] Payload: ${JSON.stringify(payload, null, 2)}`);
 
         const response = await ai.models.generateImages(payload);
 

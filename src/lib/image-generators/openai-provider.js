@@ -1,22 +1,9 @@
 import OpenAI from 'openai';
-import fs from 'fs';
+import { debugLog as appDebugLog } from '../utils.js';
 
 // Note: The OpenAI client is now initialized inside the generateImage function.
 // This ensures it only gets created when needed and after API keys are loaded.
-let openai; 
-
-function debugLog(message) {
-    // A simple logger. In a real app, this would be more robust.
-    // We check for config existence to avoid crashing if used standalone.
-    try {
-        const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
-        if (config.debug && config.debug.enabled) {
-            console.log(`[OPENAI-PROVIDER-DEBUG] ${message}`);
-        }
-    } catch (error) {
-        // Ignore if config doesn't exist
-    }
-}
+let openai;
 
 /**
  * Builds the request object for the OpenAI Images API.
@@ -54,7 +41,6 @@ function buildImageRequest(prompt, size, options, extraParams = {}) {
         request.moderation = 'low';
     }
     
-    debugLog(`OpenAI API Request: ${JSON.stringify(request, null, 2)}`);
     return request;
 }
 
@@ -112,6 +98,7 @@ export async function generateImage(prompt, sessionState) {
 
     const providerConfig = sessionState.imageGeneration.providers.openai;
     const imageRequest = buildImageRequest(prompt, providerConfig.size, providerConfig);
+    appDebugLog(sessionState, `[OPENAI-PROVIDER-DEBUG] OpenAI API Request: ${JSON.stringify(imageRequest, null, 2)}`);
     
     // The core API call.
     const imageResponse = await openaiRequestWithRetry(() => openai.images.generate(imageRequest));
