@@ -69,7 +69,8 @@
        }
     },
     "comicBorderSize": 15,
-    "imageFileName": "daily_cartoon.png"
+    "imageFileName": "daily_cartoon.png",
+    "maxRetries": 3
   },
   "textGeneration": {
     "provider": "gemini",
@@ -125,5 +126,9 @@
     "position": "bottom-right",
     "watermarkBackgroundColor": "#000000",
     "watermarkBackgroundOpacity": 0.5
+  },
+  "speechBubbles": {
+    "maxWords": 12,
+    "shortenDebug": true
   }
 }

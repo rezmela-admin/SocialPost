@@ -8,6 +8,8 @@ import { getPendingJobCount, getAnyJobCount, clearQueue } from '../queue-manager
 import { generateAndQueueComicStrip, generateAndQueuePost, generateVirtualInfluencerPost } from '../workflows.js';
 import { getAvailableLayouts } from '../comic-composer.js';
 import { displayBanner } from './banner.js';
+import { buildStylesMenu } from './styles-browser.js';
+import { buildCharactersMenu } from './characters-browser.js';
 import { buildFrameworksMenu } from './framework-selector.js';
 import { editTopic } from './topic-editor.js';
 
@@ -26,11 +28,11 @@ function getLoggedInPlatforms() {
 }
 
 async function runWorker() {
-    console.log(`\n[APP-INFO] Starting the worker process...`);
+    console.log(`\n[APP-INFO] Processing scheduled posts...`);
     return new Promise((resolve, reject) => {
         const workerProcess = spawn('node', ['worker.js'], { stdio: 'inherit' });
         workerProcess.on('close', (code) => {
-            console.log(`\n[APP-INFO] Worker process finished with exit code ${code}.`);
+            console.log(`\n[APP-INFO] Finished processing scheduled posts (exit code ${code}).`);
             resolve();
         });
         workerProcess.on('error', (err) => {
@@ -45,10 +47,18 @@ function generatePostMenu(sessionState, imageGenerator) {
     return () => {
         const draft = sessionState.draftPost;
 
+        const isComicWorkflow = !!(sessionState?.prompt && (sessionState.prompt.workflow === 'comic' || sessionState.prompt.hasOwnProperty('expectedPanelCount')));
         const menu = {
-            title: 'Generate New Post',
-            message: 'Configure the post details:',
+            title: isComicWorkflow ? 'Create New Comic' : 'Create New Cartoon',
+            message: 'Configure the details:',
             choices: [
+                {
+                    name: `Select Platforms (Current: ${draft.platforms.join(', ') || 'None'})`,
+                    value: 'selectPlatforms',
+                    action: async () => {
+                        draft.platforms = await checkbox({ message: 'Queue for which platforms?', choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}], default: draft.platforms, validate: i => i.length > 0 });
+                    }
+                },
                 {
                     name: `Set Topic (Current: ${draft.topic})`,
                     value: 'setTopic',
@@ -58,21 +68,14 @@ function generatePostMenu(sessionState, imageGenerator) {
                             draft.topic = newTopic;
                         }
                     }
-                },
-                {
-                    name: `Select Platforms (Current: ${draft.platforms.join(', ') || 'None'})`,
-                    value: 'selectPlatforms',
-                    action: async () => {
-                        draft.platforms = await checkbox({ message: 'Queue for which platforms?', choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}], default: draft.platforms, validate: i => i.length > 0 });
-                    }
                 }
             ]
         };
 
         const activeProfile = sessionState.prompt;
-        const isComicWorkflow = activeProfile.hasOwnProperty('expectedPanelCount');
+        const isComic = activeProfile.hasOwnProperty('expectedPanelCount');
 
-        if (isComicWorkflow) {
+        if (isComic) {
             const expectedPanelCount = activeProfile.expectedPanelCount || 4;
             const availableLayouts = getAvailableLayouts(expectedPanelCount);
             
@@ -98,16 +101,16 @@ function generatePostMenu(sessionState, imageGenerator) {
             });
         } else {
             menu.choices.push({
-                name: `Use Topic as Summary (Current: ${draft.skipSummarization})`,
+                name: `Use Topic as Caption (Current: ${draft.skipSummarization})`,
                 value: 'toggleSkipSummarization',
                 action: async () => {
-                    draft.skipSummarization = await confirmPrompt({ message: 'Use this topic directly as the post summary?', default: draft.skipSummarization });
+                    draft.skipSummarization = await confirmPrompt({ message: 'Use this topic directly as the caption?', default: draft.skipSummarization });
                 }
             });
         }
 
         menu.choices.push({
-            name: 'Confirm and Generate Post',
+            name: 'Create and Schedule',
             value: 'generate',
             action: async () => {
                 if (!draft.topic || draft.platforms.length === 0) {
@@ -124,7 +127,7 @@ function generatePostMenu(sessionState, imageGenerator) {
                 }
                 const confirmed = await confirmPrompt({ message: 'Proceed with generating this post?', default: true });
                 if (confirmed) {
-                    if (isComicWorkflow) {
+                    if (isComic) {
                         await generateAndQueueComicStrip(sessionState, draft, imageGenerator);
                     } else if (sessionState.prompt.workflow === 'virtualInfluencer') {
                         await generateVirtualInfluencerPost(sessionState, draft, imageGenerator, draft.skipSummarization);
@@ -185,30 +188,72 @@ export function mainMenu(sessionState, imageGenerator) {
         console.log(chalk.yellow(`
 --- Status ---
 `));
-        console.log(`- Active Profile:      ${chalk.cyan(activeProfile)}`);
-        console.log(`- Narrative Framework: ${chalk.cyan(activeFramework)}`);
-        console.log(`- Logged In:           ${chalk.cyan(loggedInPlatforms.length > 0 ? loggedInPlatforms.join(', ') : 'None')}`);
-        console.log(`- Pending Jobs:        ${chalk.cyan(pendingJobs)}`);
+        console.log(`- Comic Format:        ${chalk.cyan(activeProfile)}`);
+        const storyPatternStatus = sessionState.narrativeFrameworkPath
+            ? `${chalk.cyan(activeFramework)}`
+            : `${chalk.cyan('<None>')} ${chalk.gray('(using default)')}`;
+        console.log(`- Story Pattern:       ${storyPatternStatus}`);
+        console.log(`- Connected Accounts:  ${chalk.cyan(loggedInPlatforms.length > 0 ? loggedInPlatforms.join(', ') : 'None')}`);
+        console.log(`- Scheduled Posts:     ${chalk.cyan(pendingJobs)}`);
         console.log(chalk.yellow(`----------------
 `));
+        if (!sessionState.prompt?.profilePath) {
+            console.log(chalk.gray('Tip: Open "Comic Format" to set panels and layout.'));
+        }
+
+        const isComicWorkflow = !!(sessionState?.prompt && (sessionState.prompt.workflow === 'comic' || sessionState.prompt.hasOwnProperty('expectedPanelCount')));
+        const createLabel = isComicWorkflow ? 'Create New Comic' : 'Create New Cartoon';
 
         const menu = {
             title: 'Main Menu',
             message: 'What would you like to do?',
             choices: [
-                { name: 'Select Narrative Framework', value: 'selectNarrativeFramework', submenu: buildFrameworksMenu(sessionState) },
+                { name: 'Comic Format (panels & layout)', value: 'manageCreativeProfiles', action: async () => {
+                    const newSessionState = await manageCreativeProfiles(sessionState);
+                    Object.assign(sessionState, newSessionState);
+                } },
+                { name: 'Story Pattern (narrative structure)', value: 'selectNarrativeFramework', submenu: buildFrameworksMenu(sessionState) },
                 { 
-                    name: 'Generate and Queue a New Post', 
+                    name: 'Default Platforms (for new posts)',
+                    value: 'setDefaultPlatforms',
+                    action: async () => {
+                        const loggedIn = getLoggedInPlatforms();
+                        const current = Array.isArray(sessionState.defaultPlatforms) && sessionState.defaultPlatforms.length > 0
+                            ? sessionState.defaultPlatforms
+                            : loggedIn;
+                        const selected = await checkbox({
+                            message: 'Select default platforms for new posts:',
+                            choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}],
+                            default: current
+                        });
+                        sessionState.defaultPlatforms = selected;
+                    }
+                },
+                { 
+                    name: createLabel, 
                     value: 'generateAndQueueNewPost', 
                     action: async () => {
+                        // Prerequisite: Creative profile (Comic Format)
+                        if (!sessionState.prompt?.profilePath) {
+                            console.log(chalk.red(`\n[APP-INFO] Please choose "Comic Format" before creating a cartoon or comic.`));
+                            await new Promise(resolve => setTimeout(resolve, 1500));
+                            return;
+                        }
+                        // Story Pattern is optional; if not set, we proceed with no template.
                         // Initialize the draft state
                         sessionState.draftPost = {
                             topic: sessionState.search.defaultTopic,
-                            platforms: [],
+                            platforms: (Array.isArray(sessionState.defaultPlatforms) && sessionState.defaultPlatforms.length > 0)
+                                ? [...sessionState.defaultPlatforms]
+                                : getLoggedInPlatforms(),
                             skipSummarization: false,
                             comicLayout: null
                         };
-                        // Immediately open the editor
+                        // If no platforms yet, prompt to choose before editing topic
+                        if (!sessionState.draftPost.platforms || sessionState.draftPost.platforms.length === 0) {
+                            sessionState.draftPost.platforms = await checkbox({ message: 'Queue for which platforms?', choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}], default: [], validate: i => i.length > 0 });
+                        }
+                        // Now open the topic editor
                         const newTopic = await editTopic(sessionState.draftPost.topic, { startInEditMode: true });
                         if (newTopic) {
                             sessionState.draftPost.topic = newTopic;
@@ -228,18 +273,20 @@ export function mainMenu(sessionState, imageGenerator) {
                         return null;
                     } 
                 }, 
-                { name: 'Manage Creative Profiles', value: 'manageCreativeProfiles', action: async () => {
-                    const newSessionState = await manageCreativeProfiles(sessionState);
-                    Object.assign(sessionState, newSessionState);
-                } },
+                { name: 'Graphic Styles (visual treatment)', value: 'browseStyles', submenu: buildStylesMenu() },
+                { name: 'Characters (visual blueprints)', value: 'browseCharacters', submenu: buildCharactersMenu() },
             ]
         };
 
         if (pendingJobs > 0) {
-            menu.choices.splice(2, 0, { name: `Process Job Queue (${pendingJobs} pending)`, value: 'runWorker', action: runWorker });
+            // Insert right after "Create New" to keep it near the top
+            const createIdx = menu.choices.findIndex(c => c.value === 'generateAndQueueNewPost');
+            const insertAt = createIdx >= 0 ? createIdx + 1 : 3;
+            menu.choices.splice(insertAt, 0, { name: `Process Scheduled Posts (${pendingJobs} pending)`, value: 'runWorker', action: runWorker });
         }
         if (anyJobs > 0 || hasOrphanedImages) {
-            menu.choices.splice(pendingJobs > 0 ? 4 : 3, 0, { name: 'Clear Job Queue & Cleanup Files', value: 'clearJobQueueAndCleanupFiles', action: clearJobQueueAndCleanupFiles });
+            // Maintenance action: keep at the bottom
+            menu.choices.push({ name: 'Clear Scheduled & Delete Draft Images', value: 'clearJobQueueAndCleanupFiles', action: clearJobQueueAndCleanupFiles });
         }
 
         return menu;

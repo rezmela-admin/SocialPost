@@ -135,24 +135,24 @@ export async function manageCreativeProfiles(sessionState) {
     const activeProfile = sessionState.prompt.profilePath ? path.basename(sessionState.prompt.profilePath) : 'Default';
     
     const choices = [
-        { name: 'Load a Profile (Switch to a different character/style)', value: 'Load a Profile (Switch to a different character/style)' },
-        { name: 'Create a New Profile (Build a new character/style)', value: 'Create a New Profile (Build a new character/style)' },
-        { name: 'Delete a Profile', value: 'Delete a Profile' },
+        { name: 'Load Profile', value: 'Load Profile' },
+        { name: 'Create Profile', value: 'Create Profile' },
+        { name: 'Delete Profile', value: 'Delete Profile' },
         new Separator(),
         { name: 'Back to Main Menu', value: 'Back to Main Menu' },
     ];
 
     const action = await select({
-        message: `Creative Profiles Menu (Current: ${activeProfile})`,
+        message: `Comic Format (panels & layout) (Current: ${activeProfile})`,
         choices: choices,
     });
 
     switch (action) {
-        case 'Load a Profile (Switch to a different character/style)':
+        case 'Load Profile':
             return await loadProfile(sessionState);
-        case 'Create a New Profile (Build a new character/style)':
+        case 'Create Profile':
             return await createNewProfile(sessionState);
-        case 'Delete a Profile':
+        case 'Delete Profile':
             await deleteProfile();
             break;
         case 'Back to Main Menu':
@@ -161,4 +161,3 @@ export async function manageCreativeProfiles(sessionState) {
     }
     return sessionState;
 }
-

@@ -30,5 +30,9 @@
   {
   "name": "Pantheon-Inspired Animation",
   "prompt": "An animated still in the style of the series Pantheon: serious, mature 2D digital animation with sharp clean lines and realistic human proportions. Muted cyberpunk palette with deep shadows, punctuated by glowing neon highlights. Atmospheric lighting with a futuristic, glitchy digital aesthetic. Backgrounds suggest advanced technology and cybernetic environments."
+},
+{
+"name": "Ink-Sketchbook Line Art (Ramesh)",
+"prompt": "High-contrast black-ink drawing, hand-drawn with fineliner and brush pen. Monochrome only (no color). Bold contour lines with heavy black fills, strong spot shadows, and visible cross-hatching and stippling for mid-tones. Sparse, confident strokes; slight wobble and overlap preserved. Paper texture and light smudges visible; occasional marker bleed and graphite under-sketch hints allowed. Composition feels like reportage cartooning: realistic human proportions pushed slightly toward caricature; expressive faces; clear silhouettes; Backgrounds simplified with graphic blocks of black (city skylines, tree lines, benches) and quick pen textures. Lighting: stark, noir style with deep blacks and crisp white highlights. Avoid: color, gradients, airbrushing, glossy 3D rendering, vector-smooth lines, painterly shading, anime features, photoreal color. Output should read as a mature look with confident ink work and cross-hatched textures."
 }
 ]

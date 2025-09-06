@@ -15,7 +15,7 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
         try {
             let currentPrompt = initialPrompt;
             if (i > 0) {
-                console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating prompt after safety rejection...`);
+                console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating a safer prompt...`);
                 const regenPrompt = `The previous cartoon prompt was rejected by the image generation safety system. Please generate a new, alternative prompt for a political cartoon about the same topic that is less likely to be rejected. The original prompt was: "${initialPrompt}"`;
                 currentPrompt = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
                 console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
@@ -29,7 +29,7 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
                 console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, 2000));
             } else if (error.message && error.message.includes('Could not find image data in Gemini response.')) {
-                console.warn(`[APP-WARN] Image generation failed as no image data was returned from Gemini. Retrying... (${i + 1}/${maxRetries})`);
+                console.warn(`[APP-WARN] No image data returned. Retrying... (${i + 1}/${maxRetries})`);
             } else {
                 throw error;
             }
@@ -37,6 +37,32 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
     }
     console.error(`[APP-FATAL] Image generation failed after ${maxRetries} attempts.`);
     throw lastError;
+}
+
+// Shortens a dialogue line non-interactively if it exceeds the allowed word count.
+export async function shortenDialogueIfNeeded(textGenerator, text, maxWords = 12, sessionState = null) {
+    try {
+        const original = (text || '').trim();
+        const words = original.split(/\s+/).filter(Boolean);
+        const effectiveMax = (sessionState && sessionState.speechBubbles && typeof sessionState.speechBubbles.maxWords === 'number')
+            ? sessionState.speechBubbles.maxWords
+            : maxWords;
+        if (words.length <= effectiveMax) return original;
+        const prompt = `Shorten the following dialogue text to at most ${effectiveMax} words, preserving its meaning and tone. Respond with ONLY the shortened text, without quotes or extra commentary. Text: "${original}"`;
+        const shortened = await geminiRequestWithRetry(() => textGenerator.generate(prompt));
+        const cleaned = (shortened || '').trim().replace(/^"|"$/g, '');
+        if (cleaned && cleaned.length > 0) {
+            if (sessionState && sessionState.speechBubbles && sessionState.speechBubbles.shortenDebug) {
+                const before = words.length;
+                const after = cleaned.split(/\s+/).filter(Boolean).length;
+                debugLog(sessionState, `Shortened dialogue from ${before} to ${after} words: "${original}" -> "${cleaned}"`);
+            }
+            return cleaned;
+        }
+        return original;
+    } catch {
+        return text; // fail-safe: return original on any error
+    }
 }
 
 export async function getPostApproval(imagePath, sessionState) {
@@ -81,11 +107,53 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
     let approvedImagePath = null;
     let userAction = '';
 
+    // Helpers
+    const sanitizePanelDescription = (desc) => {
+        if (!desc) return '';
+        // Remove any leading "Panel N:" the model may have added
+        const stripped = desc.replace(/^\s*Panel\s*\d+\s*:\s*/i, '').trim();
+        return stripped.endsWith('.') ? stripped : `${stripped}.`;
+    };
+    const normalizeSpeakerName = (name) => {
+        if (!name) return '';
+        let n = String(name);
+        // Strip common titles repeatedly until none remain at start
+        const titleRegex = /^(dr\.?|doctor|mr\.?|mrs\.?|ms\.?|mx\.?|prof\.?|professor|mayor|president|governor|senator|rep\.?|representative|minister|chancellor|secretary|capt\.?|captain|gen\.?|general|lt\.?|lieutenant|sgt\.?|sergeant|officer)\s+/i;
+        while (titleRegex.test(n)) {
+            n = n.replace(titleRegex, '');
+        }
+        return n
+            .toLowerCase()
+            .normalize('NFKD').replace(/[\u0300-\u036f]/g, '') // strip accents
+            .replace(/[\._:,;\-–—'"`’“”()\[\]{}]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+    const conciseGuidance = 'Speech bubbles: use large, bold, high-contrast lettering; keep each bubble concise (ideally under 12 words); if needed, split into up to two short lines; ensure all text is fully visible and not cut off; do not include speaker labels or attributions (e.g., "Name:" or "—Name"); natural mentions of names within the sentence are allowed.';
+
     // Initialize panelPrompt with the full, composite prompt text.
     let promptParts = [
         `${selectedStyle.prompt}`,
-        `Panel ${panelIndex + 1}: ${panel.panel_description || panel.description}.`
+        `Panel ${panelIndex + 1}: ${sanitizePanelDescription(panel.panel_description || panel.description)}`
     ];
+
+    // Build a lookup of dialogue by character for interleaving (normalized keys),
+    // with a non-interactive pre-check to shorten long lines.
+    const dialogueByCharacter = new Map();
+    if (panel.dialogue && Array.isArray(panel.dialogue)) {
+        for (const d of panel.dialogue) {
+            const key = normalizeSpeakerName(d.character);
+            const shortened = await shortenDialogueIfNeeded(textGenerator, d.speech, 12, config);
+            if (!dialogueByCharacter.has(key)) dialogueByCharacter.set(key, []);
+            dialogueByCharacter.get(key).push(shortened);
+        }
+    }
+
+    // Add one-time, per-panel bubble guidance if any dialogue exists
+    if (dialogueByCharacter.size > 0) {
+        promptParts.push(conciseGuidance);
+    }
 
     if (panel.characters && Array.isArray(panel.characters)) {
         panel.characters.forEach(charObj => {
@@ -97,13 +165,33 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
                 finalDescription = charObj.description || `A character named ${characterName}.`;
                 console.warn(`[APP-WARN] Character "${characterName}" not found in library, using AI description.`);
             }
+            // Describe the character
             promptParts.push(`The character ${characterName} MUST be depicted as: ${finalDescription}.`);
+
+            // Immediately pair any dialogue for this character
+            const lines = dialogueByCharacter.get(normalizeSpeakerName(characterName)) || [];
+            lines.forEach(line => {
+                promptParts.push(`Place a clear speech bubble near ${characterName} containing exactly: "${line}".`);
+            });
+            // Remove consumed lines so we can handle any leftovers later
+            if (lines.length > 0) dialogueByCharacter.delete(normalizeSpeakerName(characterName));
         });
     }
 
-    if (panel.dialogue && Array.isArray(panel.dialogue) && panel.dialogue.length > 0) {
-        const dialogueText = panel.dialogue.map(d => `${d.character} says: '${d.speech}'`).join('; ');
-        promptParts.push(`The panel must contain rectangular dialogue boxes. IMPORTANT: These boxes MUST NOT have tails or pointers; their position near the speaker is the only indicator of who is talking. Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure the dialogue text is clear, fully visible, and not cut off. ${dialogueText}.`);
+    // If there are dialogue lines for characters not explicitly listed in panel.characters,
+    // include them as generic instructions without aggregating unrelated content.
+    if (dialogueByCharacter.size > 0) {
+        dialogueByCharacter.forEach((lines, normName) => {
+            // Try to keep the original name if present in panel.dialogue; otherwise use the normalized as-is
+            let displayName = '';
+            for (const d of panel.dialogue) {
+                if (normalizeSpeakerName(d.character) === normName) { displayName = d.character; break; }
+            }
+            const characterName = displayName || normName;
+            lines.forEach(line => {
+                promptParts.push(`Include a speech bubble for ${characterName} containing exactly: "${line}". Place it adjacent to the correct speaker.`);
+            });
+        });
     }
     
     let panelPrompt = promptParts.join(' ');
@@ -113,10 +201,42 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
 
         let imageB64;
         try {
-            imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator);
+            const retries = (config?.imageGeneration && typeof config.imageGeneration.maxRetries === 'number')
+                ? config.imageGeneration.maxRetries
+                : 0;
+            imageB64 = await generateImageWithRetry(imageGenerator, panelPrompt, config, textGenerator, retries);
         } catch (error) {
-            console.error(`[APP-ERROR] Image generation failed for panel ${panelIndex + 1}. Error: ${error.message}`);
-            userAction = 'Retry'; // Force a retry
+            console.warn(`[APP-WARN] Image generation failed for panel ${panelIndex + 1}. ${error.message || error}`);
+            const choice = await select({
+                message: `Panel ${panelIndex + 1}: image generation failed. Choose an option:`,
+                choices: [
+                    { name: 'Retry as-is', value: 'retry' },
+                    { name: 'Try safer rewording', value: 'safer' },
+                    { name: 'Edit prompt', value: 'edit' },
+                    { name: 'Cancel', value: 'cancel' }
+                ]
+            });
+            if (choice === 'cancel') {
+                userAction = 'Cancel';
+                break;
+            }
+            if (choice === 'edit') {
+                const edited = await editor({ message: 'Edit the full prompt for this panel:', default: panelPrompt });
+                if (edited && edited.trim()) panelPrompt = edited.trim();
+                userAction = 'Retry';
+                continue;
+            }
+            if (choice === 'safer') {
+                try {
+                    const regenPrompt = `The previous image prompt was rejected by a safety system or did not return an image. Please rewrite it to be safer but still faithful to this panel. Original prompt: "${panelPrompt}"`;
+                    const safer = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
+                    if (safer && safer.trim()) panelPrompt = safer.trim();
+                } catch {}
+                userAction = 'Retry';
+                continue;
+            }
+            // choice === 'retry'
+            userAction = 'Retry';
             continue;
         }
         const tempImagePath = path.join(process.cwd(), `temp_panel_for_approval_${Date.now()}.png`);
@@ -247,10 +367,11 @@ export async function promptForSpeechBubble(initialPrompt, dialogue, isVirtualIn
         validate: input => input.trim().length > 0 || 'Speech bubble text cannot be empty.'
     });
     
+    const nameRule = ' Do not include speaker labels or attributions (e.g., "Name:" or "—Name") inside the bubble; natural mentions of names within the spoken sentence are allowed. Keep the text concise (ideally under 12 words); if needed, split into up to two short lines.';
     if (isVirtualInfluencer) {
-        return `${initialPrompt} A rectangular dialogue box near the character contains the text: "${speechBubbleText}". Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure all text is fully visible and not cut off.`;
+        return `${initialPrompt} A rectangular dialogue box near the character contains the text: "${speechBubbleText}". Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure all text is fully visible and not cut off.${nameRule}`;
     } else {
-        return `${initialPrompt}, with a rectangular dialogue box containing the text: "${speechBubbleText}". Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure all text is fully visible and not cut off.`;
+        return `${initialPrompt}, with a rectangular dialogue box containing the text: "${speechBubbleText}". Use large, bold, high-contrast lettering sized for easy reading on mobile devices. Ensure all text is fully visible and not cut off.${nameRule}`;
     }
 }
 

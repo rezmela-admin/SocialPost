@@ -25,7 +25,7 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
     
     const activeProfile = sessionState.prompt;
     if (!activeProfile || !activeProfile.profilePath) {
-        console.error("[APP-FATAL] The active profile is not set. Please load a profile.");
+        console.error("[APP-FATAL] No Comic Format selected. Open 'Comic Format' from the main menu and load a profile.");
         return { success: false };
     }
     
@@ -152,7 +152,7 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
 
         const activeProfile = sessionState.prompt;
         if (!activeProfile || !activeProfile.profilePath) {
-            console.error("[APP-FATAL] The active profile is not set. Please load a profile.");
+            console.error("[APP-FATAL] No Comic Format selected. Open 'Comic Format' from the main menu and load a profile.");
             return { success: false };
         }
         
@@ -183,7 +183,7 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
         const selectedStyle = await selectGraphicStyle();
         if (!selectedStyle) return { success: false, wasCancelled: true };
 
-        const { imagePrompt, dialogue } = parsedResult;
+        let { imagePrompt, dialogue } = parsedResult;
 
         const baseImagePromptText = (typeof imagePrompt === 'string' && imagePrompt.trim().length > 0)
             ? imagePrompt
@@ -191,10 +191,19 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
 
         let finalImagePrompt = `${selectedStyle.prompt} ${baseImagePromptText}`;
 
+        // Non-interactive pre-check: auto-shorten overly long dialogue
+        if (dialogue && typeof dialogue === 'string') {
+            try {
+                const tg = getTextGenerator(sessionState);
+                const { shortenDialogueIfNeeded } = await import('./utils.js');
+                dialogue = await shortenDialogueIfNeeded(tg, dialogue, 12, sessionState);
+            } catch {}
+        }
+
         if (!postDetails.isBatch && dialogue) {
             finalImagePrompt = await promptForSpeechBubble(finalImagePrompt, dialogue || '', false);
         } else if (dialogue && dialogue.trim() !== '') {
-            finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}" using large, bold, high-contrast lettering sized for easy reading on mobile devices; ensure all text is fully visible and not cut off`;
+            finalImagePrompt += `, with a speech bubble that clearly says: "${dialogue}" using large, bold, high-contrast lettering sized for easy reading on mobile devices; keep the text concise (ideally under 12 words); ensure all text is fully visible and not cut off; do not include speaker labels or attributions (e.g., "Name:" or "—Name") inside the bubble; natural mentions of names within the spoken sentence are allowed`;
         }
 
         if (!postDetails.isBatch) {
@@ -210,7 +219,50 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
             console.log(`[APP-INFO] Sending final prompt to image generator...\n`);
             debugLog(sessionState, `Final Image Prompt: ${currentPrompt}`);
 
-            const imageB64 = await generateImageWithRetry(imageGenerator, currentPrompt, sessionState, textGenerator);
+            const retries = (sessionState?.imageGeneration && typeof sessionState.imageGeneration.maxRetries === 'number')
+                ? sessionState.imageGeneration.maxRetries
+                : 0;
+            let imageB64;
+            try {
+                imageB64 = await generateImageWithRetry(imageGenerator, currentPrompt, sessionState, textGenerator, retries);
+            } catch (error) {
+                console.warn(`[APP-WARN] Image generation failed: ${error.message || error}`);
+                const choice = await select({
+                    message: 'Image generation failed. Choose an option:',
+                    choices: [
+                        { name: 'Retry as-is', value: 'retry' },
+                        { name: 'Try safer rewording', value: 'safer' },
+                        { name: 'Edit prompt', value: 'edit' },
+                        { name: 'Cancel', value: 'cancel' },
+                    ],
+                });
+
+                if (choice === 'cancel') {
+                    console.log('[APP-INFO] Post generation cancelled by user.');
+                    return { success: false, wasCancelled: true };
+                }
+                if (choice === 'edit') {
+                    const edited = await editor({ message: 'Edit the final image prompt:', default: currentPrompt });
+                    if (edited && edited.trim()) {
+                        currentPrompt = edited.trim();
+                        sessionState.finalImagePrompt = currentPrompt;
+                    }
+                    continue; // retry loop
+                }
+                if (choice === 'safer') {
+                    try {
+                        const regenPrompt = `The previous cartoon prompt was rejected by a safety system or did not return an image. Please rewrite it to be safer and still relevant. Original prompt: "${currentPrompt}"`;
+                        const safer = await (await import('./utils.js')).geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
+                        if (safer && safer.trim()) {
+                            currentPrompt = safer.trim();
+                            sessionState.finalImagePrompt = currentPrompt;
+                        }
+                    } catch {}
+                    continue; // retry loop
+                }
+                // choice === 'retry' -> fall through and continue
+                continue;
+            }
             const uniqueImageName = `post-image-${Date.now()}.png`;
             imagePath = path.join(process.cwd(), uniqueImageName);
             fs.writeFileSync(imagePath, Buffer.from(imageB64, 'base64'));
@@ -268,7 +320,7 @@ export async function generateVirtualInfluencerPost(sessionState, postDetails, i
         if (!skipSummarization) {
             const activeProfile = sessionState.prompt;
             if (!activeProfile || !activeProfile.profilePath) {
-                console.error("[APP-FATAL] The active profile is not set. Please load a profile.");
+                console.error("[APP-FATAL] No Comic Format selected. Open 'Comic Format' from the main menu and load a profile.");
                 return { success: false };
             }
             const taskPrompt = buildTaskPrompt({
@@ -291,6 +343,12 @@ export async function generateVirtualInfluencerPost(sessionState, postDetails, i
 
         summary = await getApprovedInput(summary, 'summary') || summary;
         dialogue = await getApprovedInput(dialogue, 'dialogue') || dialogue;
+        // Non-interactive pre-check: auto-shorten overly long dialogue after approval
+        try {
+            const tg = getTextGenerator(sessionState);
+            const { shortenDialogueIfNeeded } = await import('./utils.js');
+            dialogue = await shortenDialogueIfNeeded(tg, dialogue, 12, sessionState);
+        } catch {}
         backgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt') || backgroundPrompt;
 
         const framingChoices = [...(sessionState.framingOptions || []), 'Custom...'].map(c => ({name: c, value: c}));
@@ -301,9 +359,12 @@ export async function generateVirtualInfluencerPost(sessionState, postDetails, i
         if (!selectedStyle) return { success: false, wasCancelled: true };
 
         console.log('[APP-INFO] Phase 1: Generating character...');
-        const characterPrompt = `${selectedStyle.prompt} ${sessionState.prompt.characterDescription.replace(/{TOPIC}/g, postDetails.topic)}. ${framingChoice} ...with a speech bubble saying: "${dialogue}". The background should be a solid, neutral light grey.`;
+        const characterPrompt = `${selectedStyle.prompt} ${sessionState.prompt.characterDescription.replace(/{TOPIC}/g, postDetails.topic)}. ${framingChoice} ...with a speech bubble saying: "${dialogue}". Keep the text concise (ideally under 12 words). Do not include speaker labels or attributions (e.g., "Name:" or "—Name") inside the bubble; natural mentions of names within the spoken sentence are allowed. The background should be a solid, neutral light grey.`;
         const tempCharacterPath = path.join(process.cwd(), `temp_character_${Date.now()}.png`);
-        const charImageB64 = await generateImageWithRetry(imageGenerator, characterPrompt, sessionState, textGenerator);
+        const retries = (sessionState?.imageGeneration && typeof sessionState.imageGeneration.maxRetries === 'number')
+            ? sessionState.imageGeneration.maxRetries
+            : 0;
+        const charImageB64 = await generateImageWithRetry(imageGenerator, characterPrompt, sessionState, textGenerator, retries);
         fs.writeFileSync(tempCharacterPath, Buffer.from(charImageB64, 'base64'));
         console.log(`[APP-SUCCESS] Phase 1 complete: ${tempCharacterPath}`);
 
