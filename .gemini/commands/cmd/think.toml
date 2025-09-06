@@ -1,4 +1,0 @@
-# Invoked as: /think "Your prompt here"
-description = "Balanced model (gemini-1.5-pro), excellent for most development tasks, code generation, and detailed analysis."
-model = "gemini-1.5-pro"
-prompt = "{{args}}"

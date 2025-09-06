@@ -8,20 +8,8 @@
 !.env.example
 
 # Session Files
-# Ignore all .json files in the root directory...
-*.json
-# ...except for these specific configuration files.
-!config.json
-!character_library.json
-!package.json
-!package-lock.json
-!schedule_x.json
-!schedule_linkedin.json
-!graphic_styles.json
-
-# Allow prompt profiles to be tracked
-!/prompt_profiles/*.json
-!/narrative_frameworks/*.json
+schedule_x.json
+schedule_linkedin.json
 
 # Logs, Temporary & Generated Files
 *.log
@@ -52,3 +40,9 @@ Thumbs.db
 /plans/Error.txt
 final-comic-*.pdf
 \n# Ignore post archives and temporary files\npost_archive/\npost-image-*.pdf\nError.txt\nCOMMIT_MESSAGE.txt
+post_archive/
+/.codex/
+/.gemini/
+linkedin_session.json
+post_queue.json
+x_session.json

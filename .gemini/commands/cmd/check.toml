@@ -1,4 +1,0 @@
-# Invoked as: /check "Your prompt here"
-description = "Fastest model (gemini-2.5-flash-lite), ideal for quick checks, code formatting, and simple questions."
-model = "gemini-2.5-flash-lite"
-prompt = "{{args}}"
