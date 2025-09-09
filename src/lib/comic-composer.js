@@ -61,7 +61,55 @@ async function composeComicStrip(panelImagePaths, layout, panelWidth, panelHeigh
     return outputPath;
 }
 
+/**
+ * Stacks panels vertically for a Webtoon-style export.
+ * Each panel is resized to the target width while preserving aspect ratio.
+ * @param {Array<string>} panelImagePaths
+ * @param {number} targetWidth - Pixel width of the final image and each panel.
+ * @param {number} gutter - Vertical spacing between panels (px).
+ * @param {object} background - RGBA background color, e.g., { r:255,g:255,b:255,alpha:1 }
+ * @returns {Promise<string>} - The absolute path to the final composed image.
+ */
+async function composeVerticalWebtoon(panelImagePaths, targetWidth, gutter = 120, background = { r: 255, g: 255, b: 255, alpha: 1 }) {
+    // Pre-compute resized heights from metadata to avoid buffering large images twice
+    const resizedHeights = [];
+    for (const imgPath of panelImagePaths) {
+        const meta = await sharp(imgPath).metadata();
+        const width = meta.width || targetWidth;
+        const height = meta.height || targetWidth;
+        const scale = targetWidth / Math.max(1, width);
+        resizedHeights.push(Math.round(height * scale));
+    }
+
+    const totalHeight = resizedHeights.reduce((sum, h) => sum + h, 0) + gutter * (panelImagePaths.length + 1);
+    const finalWidth = targetWidth; // no side borders for mobile-friendly scroll
+
+    const composites = [];
+    let currentTop = gutter;
+    for (let i = 0; i < panelImagePaths.length; i++) {
+        const inputBuffer = await sharp(panelImagePaths[i]).resize({ width: targetWidth }).toBuffer();
+        composites.push({ input: inputBuffer, top: currentTop, left: 0 });
+        currentTop += resizedHeights[i] + gutter;
+    }
+
+    const outputPath = path.join(process.cwd(), `final-webtoon-${Date.now()}.png`);
+    await sharp({
+        create: {
+            width: finalWidth,
+            height: totalHeight,
+            channels: 4,
+            background,
+        },
+    })
+    .composite(composites)
+    .toFile(outputPath);
+
+    console.log(`[COMIC-COMPOSER] Successfully composed vertical webtoon: ${outputPath}`);
+    return outputPath;
+}
+
 export {
     getAvailableLayouts,
     composeComicStrip,
+    composeVerticalWebtoon,
 };

@@ -5,8 +5,8 @@ import { confirm as confirmPrompt, editor, select } from '@inquirer/prompts';
 import { getTextGenerator } from './text-generators/index.js';
 import { addJob } from './queue-manager.js';
 import { exportToPdf } from './pdf-exporter.js';
-import { composeComicStrip } from './comic-composer.js';
-import { applyWatermark } from './image-processor.js';
+import { composeComicStrip, composeVerticalWebtoon } from './comic-composer.js';
+import { applyFooter, applyWatermark } from './image-processor.js';
 import { 
     debugLog, 
     buildTaskPrompt, 
@@ -87,6 +87,7 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
         summary = approvedSummary;
 
         const panelImagePaths = [];
+        const panelPromptInfos = [];
         const selectedStyle = await selectGraphicStyle();
         if (!selectedStyle) {
             console.log('[APP-INFO] Style selection cancelled. Returning to main menu.');
@@ -95,14 +96,15 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
 
         for (let i = 0; i < panels.length; i++) {
             const panel = panels[i];
-            const approvedPanelPath = await getPanelApproval(panel, i, imageGenerator, sessionState, textGenerator, selectedStyle, characterLibrary, panels.length);
+            const panelApproval = await getPanelApproval(panel, i, imageGenerator, sessionState, textGenerator, selectedStyle, characterLibrary, panels.length);
 
-            if (!approvedPanelPath) {
+            if (!panelApproval) {
                 console.log('[APP-INFO] Comic strip generation cancelled by user.');
-                panelImagePaths.forEach(p => fs.unlinkSync(p));
+                panelImagePaths.forEach(p => { try { fs.unlinkSync(p); } catch {} });
                 return { success: false, wasCancelled: true };
             }
-            panelImagePaths.push(approvedPanelPath);
+            panelImagePaths.push(panelApproval.imagePath);
+            panelPromptInfos.push({ index: i + 1, prompt: panelApproval.prompt });
         }
 
         console.log('[APP-INFO] All panels generated. Composing final comic strip...');
@@ -110,14 +112,78 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
         const providerConfig = sessionState.imageGeneration.providers[activeProvider];
         const [panelWidth, panelHeight] = providerConfig.size.split('x').map(Number);
         const borderSize = sessionState.imageGeneration.comicBorderSize || 10;
-        
-        const finalImagePath = await composeComicStrip(panelImagePaths, postDetails.comicLayout, panelWidth, panelHeight, borderSize);
 
+        // Prefer vertical stacking for avant-garde webtoon format
+        const profilePath = sessionState.prompt?.profilePath || '';
+        const isWebtoonProfile = /avantgarde-webtoon/i.test(profilePath);
+        const isWebtoonParsed = (parsedResult?.format && String(parsedResult.format).toLowerCase() === 'webtoon');
+        const useWebtoonStack = isWebtoonProfile || isWebtoonParsed;
+
+        let finalImagePath;
+        let gutterUsed = null;
+        if (useWebtoonStack) {
+            const userGutter = Number.isInteger(postDetails?.webtoonGutter) ? postDetails.webtoonGutter : null;
+            const cfgGutter = Number.isInteger(sessionState?.composition?.webtoonGutterDefault) ? sessionState.composition.webtoonGutterDefault : null;
+            const gutter = userGutter ?? (Number.isInteger(parsedResult?.gutter) ? parsedResult.gutter : (cfgGutter ?? 120));
+            gutterUsed = gutter;
+            finalImagePath = await composeVerticalWebtoon(panelImagePaths, panelWidth, gutter, { r: 255, g: 255, b: 255, alpha: 1 });
+        } else {
+            finalImagePath = await composeComicStrip(panelImagePaths, postDetails.comicLayout, panelWidth, panelHeight, borderSize);
+        }
+
+        // Apply optional footer before watermark to avoid overlap conflicts
+        await applyFooter(finalImagePath, sessionState);
         await applyWatermark(finalImagePath, sessionState);
 
         console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
-        panelImagePaths.forEach(p => fs.unlinkSync(p));
-        console.log('[APP-INFO] Cleaned up temporary panel images.');
+
+        const keepPanels = !!(sessionState?.debug && sessionState.debug.preserveTemporaryFiles);
+        if (keepPanels) {
+            try {
+                const finalBase = path.basename(finalImagePath);
+                const tsMatch = finalBase.match(/final-(?:webtoon|comic)-(\d+)\.png$/);
+                const runTs = tsMatch ? tsMatch[1] : String(Date.now());
+                const profileBase = path.basename(profilePath || 'profile', '.json');
+                const outDir = path.join(process.cwd(), 'outputs', `${profileBase}-${runTs}`);
+                const panelsDir = path.join(outDir, 'panels');
+                fs.mkdirSync(panelsDir, { recursive: true });
+
+                const movedPanelFiles = [];
+                const panelDetails = [];
+                for (let i = 0; i < panelImagePaths.length; i++) {
+                    const src = panelImagePaths[i];
+                    const dst = path.join(panelsDir, `panel-${String(i + 1).padStart(2, '0')}.png`);
+                    try { fs.renameSync(src, dst); } catch { fs.copyFileSync(src, dst); fs.unlinkSync(src); }
+                    movedPanelFiles.push(path.relative(outDir, dst));
+                    const promptInfo = panelPromptInfos[i]?.prompt || null;
+                    panelDetails.push({ file: path.relative(outDir, dst), prompt: promptInfo });
+                }
+                // Copy final into folder for convenience
+                const finalCopy = path.join(outDir, 'final.png');
+                try { fs.copyFileSync(finalImagePath, finalCopy); } catch {}
+
+                const metadata = {
+                    topic: postDetails.topic,
+                    summary,
+                    profile: profileBase,
+                    provider: activeProvider,
+                    size: providerConfig.size,
+                    layout: useWebtoonStack ? 'webtoon' : (postDetails.comicLayout || ''),
+                    gutter: gutterUsed,
+                    panelCount: panelImagePaths.length,
+                    panelFiles: movedPanelFiles,
+                    panelDetails,
+                    scriptFormat: parsedResult?.format || null
+                };
+                fs.writeFileSync(path.join(outDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+                console.log(`[APP-INFO] Kept panels and metadata in: ${outDir}`);
+            } catch (e) {
+                console.warn('[APP-WARN] Failed to archive panels/metadata:', e?.message || e);
+            }
+        } else {
+            panelImagePaths.forEach(p => { try { fs.unlinkSync(p); } catch {} });
+            console.log('[APP-INFO] Cleaned up temporary panel images.');
+        }
 
         const exportAsPdf = await confirmPrompt({ message: 'Export this comic as a PDF?', default: false });
         if (exportAsPdf) {
@@ -283,6 +349,8 @@ export async function generateAndQueuePost(sessionState, postDetails, imageGener
             }
         }
 
+        // Apply optional footer before watermark
+        await applyFooter(imagePath, sessionState);
         await applyWatermark(imagePath, sessionState);
 
         console.log(`[APP-SUCCESS] Image created and saved to: ${imagePath}`);

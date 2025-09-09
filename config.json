@@ -73,7 +73,7 @@
     "maxRetries": 3
   },
   "textGeneration": {
-    "provider": "gemini",
+    "provider": "openai",
     "providers": {
       "gemini": {
         "model": "gemini-2.5-flash",
@@ -103,7 +103,7 @@
   ],
   "debug": {
     "enabled": true,
-    "preserveTemporaryFiles": false
+    "preserveTemporaryFiles": true
   },
   "displaySettings": {
     "showBannerOnStartup": true
@@ -130,5 +130,22 @@
   "speechBubbles": {
     "maxWords": 12,
     "shortenDebug": true
+  },
+  "composition": {
+    "webtoonGutterDefault": 40,
+    "footer": {
+      "enabled": false,
+      "text": "To be continued…",
+      "font": "Arial",
+      "fontColor": "#FFFFFF",
+      "fontSize": 28,
+      "bandColor": "#000000",
+      "bandOpacity": 0.45,
+      "position": "bottom-center",
+      "margin": 24
+    }
+  },
+  "features": {
+    "avantgardePromptMapping": false
   }
 }

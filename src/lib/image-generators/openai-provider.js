@@ -23,11 +23,21 @@ function buildImageRequest(prompt, size, options, extraParams = {}) {
         finalPrompt += SPEECH_BUBBLE_INSTRUCTION;
     }
     
+    // Normalize size to supported values for gpt-image-1
+    const supported = new Set(['1024x1024', '1024x1536', '1536x1024', 'auto']);
+    let normalizedSize = size;
+    if (!supported.has(normalizedSize)) {
+        if (normalizedSize === '1792x1024') normalizedSize = '1536x1024';
+        else if (normalizedSize === '1024x1792') normalizedSize = '1024x1536';
+        else normalizedSize = '1024x1024';
+        appDebugLog(options, `[OPENAI-PROVIDER-DEBUG] Adjusted unsupported size to ${normalizedSize}`);
+    }
+
     const request = {
         model,
         prompt: finalPrompt,
         n: 1,
-        size,
+        size: normalizedSize,
         ...extraParams
     };
 

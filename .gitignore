@@ -46,3 +46,7 @@ post_archive/
 linkedin_session.json
 post_queue.json
 x_session.json
+
+# Ignore build outputs and documentation
+outputs/
+docs/

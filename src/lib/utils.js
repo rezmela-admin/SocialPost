@@ -138,6 +138,72 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
         `Panel ${panelIndex + 1}: ${sanitizePanelDescription(panel.panel_description || panel.description)}`
     ];
 
+    const featureFlag = !!(config?.features && config.features.avantgardePromptMapping);
+    const profilePath = config?.prompt?.profilePath || '';
+    const isAvantProfile = /avantgarde/i.test(profilePath);
+    const hasAvantFields = !!(panel && (panel.shot || panel.framing || panel.crop || panel.tempo || panel.panel_type || panel.sfx || panel.transition));
+    const enableAvant = featureFlag || isAvantProfile || hasAvantFields;
+
+    if (enableAvant) {
+        const shot = (panel.shot || '').toString().trim().toLowerCase();
+        const framing = (panel.framing || '').toString().trim();
+        const crop = (panel.crop || '').toString().trim().toLowerCase();
+        const tempo = (panel.tempo || '').toString().trim().toLowerCase();
+        const panelType = (panel.panel_type || '').toString().trim().toLowerCase();
+        const transition = (panel.transition || '').toString().trim().toLowerCase();
+        const sfxArr = Array.isArray(panel.sfx) ? panel.sfx.filter(s => typeof s === 'string' && s.trim().length > 0) : [];
+
+        const SHOTS = new Set(['ecu','cu','mcu','ms','ws','ews','birdseye','low-angle','dutch-angle']);
+        if (SHOTS.has(shot)) {
+            let cameraLine = '';
+            if (shot === 'ecu') cameraLine = 'Camera: extreme close-up; 85–100mm macro; very shallow depth of field; fill the frame with a single feature.';
+            else if (shot === 'cu') cameraLine = 'Camera: close-up; ~85mm; shallow depth; face dominates the frame.';
+            else if (shot === 'mcu') cameraLine = 'Camera: medium close-up; 50–85mm; chest-up composition.';
+            else if (shot === 'ms') cameraLine = 'Camera: medium shot; 35–50mm; waist-up; balanced subject/background.';
+            else if (shot === 'ws') cameraLine = 'Camera: wide shot; 24–35mm; full body with environmental context.';
+            else if (shot === 'ews') cameraLine = 'Camera: extreme wide shot; 18–24mm; small figures in a vast environment.';
+            else if (shot === 'birdseye') cameraLine = 'Camera: bird’s-eye view (top-down).';
+            else if (shot === 'low-angle') cameraLine = 'Camera: low-angle upward; emphasize scale and dominance.';
+            else if (shot === 'dutch-angle') cameraLine = 'Camera: dutch (canted) angle; tilted horizon for unease.';
+            if (cameraLine) promptParts.push(cameraLine);
+        }
+
+        if (framing) {
+            promptParts.push(`Framing: ${framing}.`);
+        }
+
+        if (crop) {
+            if (crop.includes('9:16')) promptParts.push('Composition: tall 9:16 vertical panel; generous breathing space; guide the eye downwards.');
+            else if (crop.includes('21:9')) promptParts.push('Composition: cinematic 21:9 letterboxed panel; keep key subjects within safe center area.');
+            else if (crop.includes('1:1') || crop.includes('square')) promptParts.push('Composition: square 1:1; centered or rule-of-thirds subject placement.');
+        }
+
+        if (tempo) {
+            if (tempo === 'linger') promptParts.push('Tempo: linger on a single moment; minimal motion; sparse background; single beat.');
+            else if (tempo === 'beat') promptParts.push('Tempo: one clear beat; strong focal point; uncluttered composition.');
+            else if (tempo === 'impact') promptParts.push('Tempo: freeze the impact moment; high contrast; speed lines or motion accents.');
+            else if (tempo === 'smash') promptParts.push('Tempo: dynamic smash beat; aggressive diagonals; implied debris/motion blur.');
+            else if (tempo === 'transition') promptParts.push('Tempo: transitional panel; eye-path guidance toward next panel.');
+        }
+
+        if (panelType) {
+            if (panelType === 'splash') promptParts.push('Panel type: splash; dramatic scale; increased rendering detail; near full-bleed feel.');
+            else if (panelType === 'micro-reaction') promptParts.push('Panel type: micro-reaction; focus tightly on subtle expression or gesture.');
+            else if (panelType === 'establishing') promptParts.push('Panel type: establishing; emphasize environment and spatial context.');
+            else if (panelType === 'action-beat') promptParts.push('Panel type: action-beat; a single, readable action with clear silhouette.');
+            else if (panelType === 'caption-only') promptParts.push('Panel type: caption-only; no speech bubbles; optional caption box only.');
+        }
+
+        if (Array.isArray(sfxArr) && sfxArr.length > 0) {
+            const list = sfxArr.slice(0, 4).map(s => `"${s.trim()}"`).join(', ');
+            promptParts.push(`Include stylized SFX text near motion/impact: ${list}.`);
+        }
+
+        if (transition) {
+            promptParts.push(`Visual transition into next panel: ${transition}.`);
+        }
+    }
+
     // Build a lookup of dialogue by character for interleaving (normalized keys),
     // with a non-interactive pre-check to shorten long lines.
     const dialogueByCharacter = new Map();
@@ -283,7 +349,7 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
         return null;
     }
 
-    return approvedImagePath;
+    return { imagePath: approvedImagePath, prompt: panelPrompt };
 }
 
 export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }) {

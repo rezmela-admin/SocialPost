@@ -1,11 +1,31 @@
 import chalk from 'chalk';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 function getVersion() {
-    const packageJsonPath = path.join(process.cwd(), 'package.json');
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    return packageJson.version || '1.0';
+    // Prefer reading from CWD (normal case when running `node app.js` in repo root)
+    try {
+        const cwdPackage = path.join(process.cwd(), 'package.json');
+        if (fs.existsSync(cwdPackage)) {
+            const pkg = JSON.parse(fs.readFileSync(cwdPackage, 'utf8'));
+            return pkg.version || '1.0';
+        }
+    } catch {}
+
+    // Fallback: resolve relative to this file's location (handles being called from other CWDs)
+    try {
+        const thisFile = fileURLToPath(import.meta.url);
+        const here = path.dirname(thisFile);
+        const repoRoot = path.resolve(here, '../../../');
+        const pkgPath = path.join(repoRoot, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            return pkg.version || '1.0';
+        }
+    } catch {}
+
+    return '1.0';
 }
 
 export function displayBanner() {

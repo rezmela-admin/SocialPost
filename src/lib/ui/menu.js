@@ -1,4 +1,4 @@
-import { editor, checkbox, confirm as confirmPrompt, select } from '@inquirer/prompts';
+import { editor, checkbox, confirm as confirmPrompt, select, input } from '@inquirer/prompts';
 import path from 'path';
 import fs from 'fs';
 import chalk from 'chalk';
@@ -12,6 +12,8 @@ import { buildStylesMenu } from './styles-browser.js';
 import { buildCharactersMenu } from './characters-browser.js';
 import { buildFrameworksMenu } from './framework-selector.js';
 import { editTopic } from './topic-editor.js';
+import { getImageGenerator } from '../image-generators/index.js';
+import { getTextGenerator } from '../text-generators/index.js';
 
 function getLoggedInPlatforms() {
     const loggedIn = [];
@@ -25,6 +27,41 @@ function getLoggedInPlatforms() {
         loggedIn.push('Bluesky');
     }
     return loggedIn;
+}
+
+async function setImageSize(sessionState) {
+    const activeProvider = sessionState.imageGeneration.provider;
+    const providerCfg = sessionState.imageGeneration.providers[activeProvider] || {};
+    const current = providerCfg.size || '<provider default>';
+
+    const choice = await select({
+        message: `Choose image size for provider "${activeProvider}" (Current: ${current})`,
+        choices: [
+            { name: 'Square — 1024x1024', value: '1024x1024' },
+            { name: 'Portrait — 1024x1536 (2:3)', value: '1024x1536' },
+            { name: 'Landscape — 1536x1024 (3:2)', value: '1536x1024' },
+            { name: 'Custom…', value: 'custom' },
+            { name: 'Cancel', value: 'cancel' }
+        ]
+    });
+
+    if (choice === 'cancel') return;
+
+    let finalSize = choice;
+    if (choice === 'custom') {
+        const custom = await input({
+            message: 'Enter size as WIDTHxHEIGHT (e.g., 1536x1024):',
+            validate: (v) => /^(\d+)x(\d+)$/.test(v.trim()) || 'Format must be WIDTHxHEIGHT with digits only.'
+        });
+        finalSize = custom.trim();
+    }
+
+    // Apply to active provider only for this session
+    sessionState.imageGeneration.providers[activeProvider] = {
+        ...providerCfg,
+        size: finalSize
+    };
+    console.log(`[APP-SUCCESS] Image size set to ${finalSize} for provider "${activeProvider}" (session only).`);
 }
 
 async function runWorker() {
@@ -42,9 +79,31 @@ async function runWorker() {
     });
 }
 
+function toggleFooterOverlay(sessionState) {
+    if (!sessionState.composition) sessionState.composition = {};
+    if (!sessionState.composition.footer) {
+        sessionState.composition.footer = {
+            enabled: false,
+            text: 'To be continued…',
+            font: 'Arial',
+            fontColor: '#FFFFFF',
+            fontSize: 28,
+            bandColor: '#000000',
+            bandOpacity: 0.45,
+            position: 'bottom-center',
+            margin: 24,
+        };
+    }
+    const current = !!sessionState.composition.footer.enabled;
+    sessionState.composition.footer.enabled = !current;
+    console.log(`[APP-INFO] Footer overlay is now ${sessionState.composition.footer.enabled ? 'ENABLED' : 'DISABLED'}.`);
+}
+
 function generatePostMenu(sessionState, imageGenerator) {
     // This menu is now STATELESS. It reads from and writes to sessionState.draftPost.
     return () => {
+        // Always pick the latest image generator if user changed provider
+        const currentImageGenerator = sessionState.__imageGenerator || imageGenerator;
         const draft = sessionState.draftPost;
 
         const isComicWorkflow = !!(sessionState?.prompt && (sessionState.prompt.workflow === 'comic' || sessionState.prompt.hasOwnProperty('expectedPanelCount')));
@@ -74,31 +133,54 @@ function generatePostMenu(sessionState, imageGenerator) {
 
         const activeProfile = sessionState.prompt;
         const isComic = activeProfile.hasOwnProperty('expectedPanelCount');
+        const isWebtoonProfile = !!(activeProfile?.profilePath && /avantgarde-webtoon/i.test(activeProfile.profilePath));
 
         if (isComic) {
             const expectedPanelCount = activeProfile.expectedPanelCount || 4;
             const availableLayouts = getAvailableLayouts(expectedPanelCount);
             
-            if (!draft.comicLayout && availableLayouts.length > 0) {
-                draft.comicLayout = availableLayouts[0].value;
-            }
-
-            menu.choices.push({
-                name: `Select Layout (Current: ${draft.comicLayout || 'None'})`,
-                value: 'selectLayout',
-                action: async () => {
-                    if (availableLayouts.length === 0) {
-                        console.log(chalk.red(`
-[APP-ERROR] No layouts available for a ${expectedPanelCount}-panel comic. Please check your profile.`));
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        return;
-                    }
-                    draft.comicLayout = await select({
-                        message: 'Choose a comic strip layout:',
-                        choices: availableLayouts
-                    });
+            if (isWebtoonProfile) {
+                // Webtoon mode: no grid layout selection; expose gutter control instead
+                if (typeof draft.webtoonGutter !== 'number') {
+                    const defaultGutter = Number.isInteger(sessionState?.composition?.webtoonGutterDefault)
+                        ? sessionState.composition.webtoonGutterDefault
+                        : 120;
+                    draft.webtoonGutter = defaultGutter;
                 }
-            });
+                menu.choices.push({
+                    name: `Webtoon Gutter (px) (Current: ${draft.webtoonGutter})`,
+                    value: 'setWebtoonGutter',
+                    action: async () => {
+                        const val = await editor({
+                            message: 'Enter vertical gutter in pixels (recommend 100–180):',
+                            default: String(draft.webtoonGutter),
+                            validate: (t) => /^\s*\d+\s*$/.test(t) || 'Enter an integer number of pixels.'
+                        });
+                        const n = parseInt(String(val).trim(), 10);
+                        if (!Number.isNaN(n)) draft.webtoonGutter = n;
+                    }
+                });
+            } else {
+                if (!draft.comicLayout && availableLayouts.length > 0) {
+                    draft.comicLayout = availableLayouts[0].value;
+                }
+                menu.choices.push({
+                    name: `Select Layout (Current: ${draft.comicLayout || 'None'})`,
+                    value: 'selectLayout',
+                    action: async () => {
+                        if (availableLayouts.length === 0) {
+                            console.log(chalk.red(`
+[APP-ERROR] No layouts available for a ${expectedPanelCount}-panel comic. Please check your profile.`));
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            return;
+                        }
+                        draft.comicLayout = await select({
+                            message: 'Choose a comic strip layout:',
+                            choices: availableLayouts
+                        });
+                    }
+                });
+            }
         } else {
             menu.choices.push({
                 name: `Use Topic as Caption (Current: ${draft.skipSummarization})`,
@@ -119,7 +201,8 @@ function generatePostMenu(sessionState, imageGenerator) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     return;
                 }
-                if (isComicWorkflow && !draft.comicLayout) {
+                const isWebtoon = !!(sessionState?.prompt?.profilePath && /avantgarde-webtoon/i.test(sessionState.prompt.profilePath));
+                if (isComicWorkflow && !isWebtoon && !draft.comicLayout) {
                     console.log(chalk.red(`
 [APP-ERROR] A comic strip layout must be selected before generating.`));
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -128,11 +211,11 @@ function generatePostMenu(sessionState, imageGenerator) {
                 const confirmed = await confirmPrompt({ message: 'Proceed with generating this post?', default: true });
                 if (confirmed) {
                     if (isComic) {
-                        await generateAndQueueComicStrip(sessionState, draft, imageGenerator);
+                        await generateAndQueueComicStrip(sessionState, draft, currentImageGenerator);
                     } else if (sessionState.prompt.workflow === 'virtualInfluencer') {
-                        await generateVirtualInfluencerPost(sessionState, draft, imageGenerator, draft.skipSummarization);
+                        await generateVirtualInfluencerPost(sessionState, draft, currentImageGenerator, draft.skipSummarization);
                     } else {
-                        await generateAndQueuePost(sessionState, draft, imageGenerator, draft.skipSummarization);
+                        await generateAndQueuePost(sessionState, draft, currentImageGenerator, draft.skipSummarization);
                     }
                     sessionState.draftPost = null; // Clean up draft state
                 } else {
@@ -189,6 +272,13 @@ export function mainMenu(sessionState, imageGenerator) {
 --- Status ---
 `));
         console.log(`- Comic Format:        ${chalk.cyan(activeProfile)}`);
+        const activeProvider = sessionState.imageGeneration?.provider || '<none>';
+        const sizeNow = sessionState.imageGeneration?.providers?.[activeProvider]?.size || '<default>'; 
+        console.log(`- Image Provider:      ${chalk.cyan(activeProvider)} ${chalk.gray(`(size: ${sizeNow})`)}`);
+        const activeTextProvider = sessionState.textGeneration?.provider || '<none>';
+        console.log(`- Text Provider:       ${chalk.cyan(activeTextProvider)}`);
+        const footerState = !!(sessionState.composition && sessionState.composition.footer && sessionState.composition.footer.enabled);
+        console.log(`- Footer Overlay:      ${chalk.cyan(footerState ? 'On' : 'Off')}`);
         const storyPatternStatus = sessionState.narrativeFrameworkPath
             ? `${chalk.cyan(activeFramework)}`
             : `${chalk.cyan('<None>')} ${chalk.gray('(using default)')}`;
@@ -202,7 +292,8 @@ export function mainMenu(sessionState, imageGenerator) {
         }
 
         const isComicWorkflow = !!(sessionState?.prompt && (sessionState.prompt.workflow === 'comic' || sessionState.prompt.hasOwnProperty('expectedPanelCount')));
-        const createLabel = isComicWorkflow ? 'Create New Comic' : 'Create New Cartoon';
+        const isWebtoonProfile = !!(sessionState?.prompt?.profilePath && /avantgarde-webtoon/i.test(sessionState.prompt.profilePath));
+        const createLabel = isComicWorkflow ? (isWebtoonProfile ? 'Create New Webtoon' : 'Create New Comic') : 'Create New Cartoon';
 
         const menu = {
             title: 'Main Menu',
@@ -213,6 +304,91 @@ export function mainMenu(sessionState, imageGenerator) {
                     Object.assign(sessionState, newSessionState);
                 } },
                 { name: 'Story Pattern (narrative structure)', value: 'selectNarrativeFramework', submenu: buildFrameworksMenu(sessionState) },
+                {
+                    name: () => {
+                        const active = sessionState.imageGeneration?.provider || '<none>';
+                        return `Image Provider (Current: ${active})`;
+                    },
+                    value: 'setImageProvider',
+                    action: async () => {
+                        try {
+                            const providers = Object.keys(sessionState.imageGeneration?.providers || {});
+                            if (providers.length === 0) {
+                                console.log(chalk.red('\n[APP-ERROR] No image providers found in config.json.'));
+                                await new Promise(r => setTimeout(r, 1500));
+                                return;
+                            }
+                            const choice = await select({
+                                message: 'Choose image provider:',
+                                choices: providers.map(p => ({ name: p, value: p }))
+                            });
+                            const prev = sessionState.imageGeneration.provider;
+                            // Preflight without mutating state in case it fails
+                            const testState = {
+                                ...sessionState,
+                                imageGeneration: { ...sessionState.imageGeneration, provider: choice }
+                            };
+                            const newGen = await getImageGenerator(testState);
+                            // Commit only after success
+                            sessionState.imageGeneration.provider = choice;
+                            sessionState.__imageGenerator = newGen;
+                            console.log(`[APP-SUCCESS] Image provider set to "${choice}".`);
+                        } catch (err) {
+                            console.error('[APP-ERROR] Could not set image provider:', err.message || err);
+                        }
+                    }
+                },
+                {
+                    name: () => {
+                        const active = sessionState.textGeneration?.provider || '<none>';
+                        return `Text Provider (Current: ${active})`;
+                    },
+                    value: 'setTextProvider',
+                    action: async () => {
+                        try {
+                            const providers = Object.keys(sessionState.textGeneration?.providers || {});
+                            if (providers.length === 0) {
+                                console.log(chalk.red('\n[APP-ERROR] No text providers found in config.json.'));
+                                await new Promise(r => setTimeout(r, 1500));
+                                return;
+                            }
+                            const choice = await select({
+                                message: 'Choose text provider:',
+                                choices: providers.map(p => ({ name: p, value: p }))
+                            });
+                            // Preflight provider to avoid breaking later
+                            const testState = {
+                                ...sessionState,
+                                textGeneration: { ...sessionState.textGeneration, provider: choice }
+                            };
+                            try {
+                                // Attempt to instantiate to validate env/config; ignore returned instance
+                                getTextGenerator(testState);
+                            } catch (e) {
+                                console.error('[APP-ERROR] Selected text provider is not usable now (check API key and model). Keeping previous provider.');
+                                await new Promise(r => setTimeout(r, 1500));
+                                return;
+                            }
+                            sessionState.textGeneration.provider = choice;
+                            console.log(`[APP-SUCCESS] Text provider set to "${choice}".`);
+                        } catch (err) {
+                            console.error('[APP-ERROR] Could not set text provider:', err.message || err);
+                        }
+                    }
+                },
+                { 
+                    name: 'Image Size (resolution)',
+                    value: 'setImageSize',
+                    action: async () => { await setImageSize(sessionState); }
+                },
+                {
+                    name: () => {
+                        const on = !!(sessionState.composition && sessionState.composition.footer && sessionState.composition.footer.enabled);
+                        return `Footer Overlay (final image) — ${on ? 'On' : 'Off'}`;
+                    },
+                    value: 'toggleFooter',
+                    action: async () => { toggleFooterOverlay(sessionState); }
+                },
                 { 
                     name: 'Default Platforms (for new posts)',
                     value: 'setDefaultPlatforms',

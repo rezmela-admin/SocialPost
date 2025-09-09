@@ -12,7 +12,13 @@ export async function menuManager(sessionState, menu) {
             currentMenu = currentMenu();
         }
 
-        const choices = [...currentMenu.choices];
+        // Normalize choices: evaluate dynamic labels if provided as functions
+        const choices = currentMenu.choices.map((c) => {
+            // Preserve separators as-is
+            if (c instanceof Separator) return c;
+            const name = typeof c.name === 'function' ? c.name() : c.name;
+            return { ...c, name };
+        });
 
         if (menuStack.length > 1) {
             choices.push(new Separator());
