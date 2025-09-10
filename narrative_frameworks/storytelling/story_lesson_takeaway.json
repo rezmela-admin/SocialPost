@@ -1,5 +1,6 @@
 {
   "name": "Story -> Lesson -> Takeaway",
   "description": "Turns a personal experience into a valuable and actionable lesson for the audience.",
-  "template": "Structure the post around the 'Story -> Lesson -> Takeaway' framework. The Story is a brief, vivid moment. The Lesson is what you learned from that experience. The Takeaway is a simple rule or action that others can apply in their own lives."
+  "template": "Structure the post around the 'Story -> Lesson -> Takeaway' framework. The Story is a brief, vivid moment. The Lesson is what you learned from that experience. The Takeaway is a simple rule or action that others can apply in their own lives.",
+  "example": "Story: My first live demo crashed because I didn't test with hotel Wi‑Fi.\n\nLesson: Environments differ; rehearsal needs to mirror reality.\n\nTakeaway: Always do a full run on the exact setup (network, projector, power) you'll use, or bring your own hotspot and HDMI dongle."
 }

@@ -1,5 +1,6 @@
 {
   "name": "Biography Stage: Early Life & Influences",
   "description": "Childhood context, early constraints, and first sparks that shaped worldview.",
-  "template": "Structure the post around 'Early Life & Influences'. Include: birth year and place; family and socioeconomic context; constraints or challenges; first exposure to the domain; one vivid micro-scene (e.g., a classroom moment, a garage tinkering, a library discovery); and a single connecting line explaining how these influences foreshadow later themes. For a comic, use clear era cues (fashion, tech, signage) and a grounded setting (home, school, neighborhood)."
+  "template": "Structure the post around 'Early Life & Influences'. Include: birth year and place; family and socioeconomic context; constraints or challenges; first exposure to the domain; one vivid micro-scene (e.g., a classroom moment, a garage tinkering, a library discovery); and a single connecting line explaining how these influences foreshadow later themes. For a comic, use clear era cues (fashion, tech, signage) and a grounded setting (home, school, neighborhood).",
+  "example": "Born: 1991, small industrial town; parents ran a repair shop.\n\nContext: Money was tight; weekends meant helping sort parts and receipts.\n\nFirst Exposure: A donated 486 PC at school; discovered LOGO and later Python.\n\nMicro-scene: Soldering an old radio on the kitchen table, learning to follow schematics.\n\nThroughline: Fixing things under constraints shaped a 'make it work with what you have' mindset seen in later work."
 }

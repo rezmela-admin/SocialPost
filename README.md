@@ -106,6 +106,14 @@ Before you can queue posts, you must log in to your social media accounts to cre
 2.  Choose one of the content creation options from the menu.
 3.  Follow the prompts to generate and approve your content. A new job will be added to the `post_queue.json` file.
 
+### Getting Started with Story Patterns
+
+- From the main menu, choose `Story Pattern (narrative structure)`.
+- Browse categories (How To, Storytelling, Biography, etc.) and pick a pattern.
+- Then select Create New: the topic editor opens with that pattern’s example prefilled—overwrite it with your idea.
+- To remove a pattern, open the Story Pattern browser and pick `No Template (Default)` at the root.
+- The selected pattern guides structure for this session and can be changed anytime.
+
 ### Step 3: Process the Queue
 
 When you are ready to publish your queued posts, run the worker:
@@ -115,3 +123,62 @@ node worker.js
 ```
 
 The worker will find pending jobs in the queue and post them one by one. You can run this script at any time. For full automation, consider setting up a scheduled task (like a cron job or Windows Task Scheduler) to run it periodically.
+
+## Video Export (Panels → MP4)
+
+You can export a mobile-friendly MP4 from a generated comic output directory. This automates the ffmpeg steps and supports configurable durations, transitions, and a subtle Ken Burns zoom.
+
+Basic example:
+
+```bash
+node scripts/export-video.js --input outputs/<your-comic-folder> \
+  --size 1080x1920 --fps 30 --duration 2.0 \
+  --transition slideleft --trans-duration 0.5 \
+  --kenburns in --zoom-to 1.08
+```
+
+Key options:
+- `--input` (required): path to an `outputs/<...>` folder containing `metadata.json` and a `panels/` directory.
+- `--out`: file path for the resulting MP4 (default: `<input>/video-<timestamp>.mp4`).
+- `--size <WxH>`: output resolution (default: `1080x1920` or `metadata.size`).
+- `--fps`: frames per second (default: `30`).
+- `--duration`: default seconds per panel.
+- `--durations <csv>`: per-panel durations (e.g., `2.4,1.8,1.8,1.8,1.8,2.2`).
+- `--transition`: global transition (e.g., `fade`, `fadeblack`, `slideleft`, `wipleft`, `none`).
+- `--transitions <csv>`: per-gap transitions list.
+- `--trans-duration`: crossfade/transition length in seconds (default: `0.5`).
+- `--kenburns`: `none` | `in` | `out` (or CSV per panel).
+- `--zoom-to`: end zoom factor for Ken Burns (default: `1.06`).
+
+Behavior notes:
+- If `panels/list.txt` exists (ffmpeg-concat format), its `duration` lines are used automatically.
+- Images are scaled with letterboxing to the target size and encoded as `yuv420p` for wide compatibility.
+- Transitions use ffmpeg `xfade`; `none` yields a hard cut.
+- Slow zoom uses `zoompan` with a small linear change to avoid artifacting.
+- If `metadata.json.panelDetails` contains lines like "Visual transition into next panel: push-in", the exporter auto-maps hints to transitions and per-panel Ken Burns when you don’t explicitly pass `--transitions`/`--kenburns`.
+ - Strict mode (default) validates inputs and forces even output dimensions; if you supply an odd width/height, it adjusts to the nearest even for encoder compatibility.
+
+## Story Patterns & Examples
+
+The app supports reusable storytelling structures (“Story Patterns”) stored under `narrative_frameworks/` as JSON files. Each file typically has these keys:
+
+- `name`: Display name in the menu (e.g., "Playbook: Title -> Steps -> CTA").
+- `description`: One-line purpose of the pattern.
+- `template`: Text appended to the AI task to guide structure.
+- `example`: A short, concrete starter text shown to the user.
+
+### Editor Preload Behavior
+
+- When you select a Story Pattern that includes an `example`, the topic editor opens with that example prefilled. You can overwrite it directly.
+- If no pattern is selected or the file lacks an `example`, the editor falls back to `config.search.defaultTopic`.
+- Menu labels and prompts show only the first line of long examples for readability.
+
+### Validate Framework Files (Optional)
+
+You can validate all narrative templates at any time:
+
+```bash
+node scripts/validate_frameworks.js
+```
+
+This checks that each JSON under `narrative_frameworks/` is valid and contains `name`, `description`, `template`, and `example`. It prints `[OK]` if all pass, or lists any files with issues and exits non‑zero.

@@ -1,5 +1,6 @@
 {
   "name": "Myth -> Truth -> Action",
   "description": "Debunks a common myth, presents a counterintuitive truth, and provides a clear action.",
-  "template": "Structure the post and comic around the 'Myth -> Truth -> Action' framework. The Myth is a popular belief, the Truth is the counter-intuitive reality, and the Action is what the audience should do. The comic should visually represent this journey."
+  "template": "Structure the post and comic around the 'Myth -> Truth -> Action' framework. The Myth is a popular belief, the Truth is the counter-intuitive reality, and the Action is what the audience should do. The comic should visually represent this journey.",
+  "example": "Myth: You need 8 hours to get a meaningful workout.\n\nTruth: Short, high‑intensity or focused sessions (10–20 minutes) drive consistent gains.\n\nAction: Schedule 3×15‑minute sessions this week: Mon—bodyweight circuit, Wed—interval walk/jog, Fri—mobility flow."
 }

@@ -1,5 +1,6 @@
 {
   "name": "Biography Stage: Crisis or Setback",
   "description": "A stumble, its causes and costs, and what it taught.",
-  "template": "Structure the post around 'Crisis or Setback'. Identify the nature of the setback (creative, financial, reputational, health); the proximate causes; the cost or consequence; and what was learned or changed (process, team, strategy). Include one reflective line or quoted sentiment if available. For a comic, juxtapose the 'hit' (e.g., headline, empty venue, broken prototype) with a quiet moment of reflection or resolve."
+  "template": "Structure the post around 'Crisis or Setback'. Identify the nature of the setback (creative, financial, reputational, health); the proximate causes; the cost or consequence; and what was learned or changed (process, team, strategy). Include one reflective line or quoted sentiment if available. For a comic, juxtapose the 'hit' (e.g., headline, empty venue, broken prototype) with a quiet moment of reflection or resolve.",
+  "example": "Setback: Launch day outage took the app offline for 6 hours.\n\nCause: Single-region dependency and a missing database failover.\n\nCost: Refunds, angry tweets, and a week of lost momentum.\n\nChange: Added multi-region replicas, runbook, and a chaos test every Friday. 'We learned to design for failure, not hope for uptime.'"
 }

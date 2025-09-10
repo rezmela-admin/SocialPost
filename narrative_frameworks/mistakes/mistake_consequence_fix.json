@@ -1,5 +1,6 @@
 {
   "name": "Mistake -> Consequence -> Fix",
   "description": "Builds credibility and provides value by sharing a mistake, its negative impact, and the steps to correct or avoid it.",
-  "template": "Structure the post around the 'Mistake -> Consequence -> Fix' framework. The Mistake is what you or someone did wrong. The Consequence is the cost or pain that resulted. The Fix provides the exact steps to correct the error or avoid it in the future."
+  "template": "Structure the post around the 'Mistake -> Consequence -> Fix' framework. The Mistake is what you or someone did wrong. The Consequence is the cost or pain that resulted. The Fix provides the exact steps to correct the error or avoid it in the future.",
+  "example": "Mistake: I merged to main without running tests locally.\n\nConsequence: Production broke for 12 minutes; we rolled back and lost user trust.\n\nFix: 1) Set pre‑push hook to run unit tests. 2) Require one green CI check before merge. 3) Add a rollback runbook with a single command."
 }

@@ -14,6 +14,9 @@ import { buildFrameworksMenu } from './framework-selector.js';
 import { editTopic } from './topic-editor.js';
 import { getImageGenerator } from '../image-generators/index.js';
 import { getTextGenerator } from '../text-generators/index.js';
+import { exportVideoFromPanels } from '../video-exporter.js';
+import { checkDependencies } from '../utils.js';
+import { addJob } from '../queue-manager.js';
 
 function getLoggedInPlatforms() {
     const loggedIn = [];
@@ -105,6 +108,8 @@ function generatePostMenu(sessionState, imageGenerator) {
         // Always pick the latest image generator if user changed provider
         const currentImageGenerator = sessionState.__imageGenerator || imageGenerator;
         const draft = sessionState.draftPost;
+        const topicFirstLine = String(draft.topic || '').split('\n')[0];
+        const topicPreview = topicFirstLine.length > 60 ? topicFirstLine.slice(0, 60) + '…' : topicFirstLine;
 
         const isComicWorkflow = !!(sessionState?.prompt && (sessionState.prompt.workflow === 'comic' || sessionState.prompt.hasOwnProperty('expectedPanelCount')));
         const menu = {
@@ -119,7 +124,7 @@ function generatePostMenu(sessionState, imageGenerator) {
                     }
                 },
                 {
-                    name: `Set Topic (Current: ${draft.topic})`,
+                    name: `Set Topic (Current: ${topicPreview || '<empty>'})`,
                     value: 'setTopic',
                     action: async () => {
                         const newTopic = await editTopic(draft.topic, { startInEditMode: true });
@@ -417,8 +422,22 @@ export function mainMenu(sessionState, imageGenerator) {
                         }
                         // Story Pattern is optional; if not set, we proceed with no template.
                         // Initialize the draft state
+                        // If a Story Pattern with an example is selected, preload that example into the editor
+                        let initialTopic = sessionState.search.defaultTopic;
+                        try {
+                            const fwPath = sessionState.narrativeFrameworkPath;
+                            if (fwPath && fs.existsSync(fwPath)) {
+                                const fw = JSON.parse(fs.readFileSync(fwPath, 'utf8'));
+                                if (fw && typeof fw.example === 'string' && fw.example.trim().length > 0) {
+                                    initialTopic = fw.example.trim();
+                                    console.log('[APP-INFO] Preloaded topic with example from selected Story Pattern.');
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('[APP-WARN] Could not read example from selected Story Pattern:', e?.message || e);
+                        }
                         sessionState.draftPost = {
-                            topic: sessionState.search.defaultTopic,
+                            topic: initialTopic,
                             platforms: (Array.isArray(sessionState.defaultPlatforms) && sessionState.defaultPlatforms.length > 0)
                                 ? [...sessionState.defaultPlatforms]
                                 : getLoggedInPlatforms(),
@@ -451,6 +470,8 @@ export function mainMenu(sessionState, imageGenerator) {
                 }, 
                 { name: 'Graphic Styles (visual treatment)', value: 'browseStyles', submenu: buildStylesMenu() },
                 { name: 'Characters (visual blueprints)', value: 'browseCharacters', submenu: buildCharactersMenu() },
+                { name: 'Export Video (FFmpeg from panels)', value: 'exportVideo', action: async () => { await exportVideoFlow(); } },
+                { name: 'Queue Video Post (upload mp4 like image)', value: 'queueVideoPost', action: async () => { await queueVideoPostFlow(sessionState); } },
             ]
         };
 
@@ -465,6 +486,218 @@ export function mainMenu(sessionState, imageGenerator) {
             menu.choices.push({ name: 'Clear Scheduled & Delete Draft Images', value: 'clearJobQueueAndCleanupFiles', action: clearJobQueueAndCleanupFiles });
         }
 
+        // Environment diagnostics
+        menu.choices.push({ name: 'Check Dependencies (Playwright, FFmpeg)', value: 'checkDeps', action: async () => { await checkDependencies({ quick: false, quiet: false }); } });
+
         return menu;
     };
+}
+
+async function exportVideoFlow() {
+    try {
+        const outputsRoot = path.join(process.cwd(), 'outputs');
+        if (!fs.existsSync(outputsRoot)) {
+            console.log(chalk.red('[APP-ERROR] outputs/ folder not found. Generate a comic first.'));
+            await new Promise(r => setTimeout(r, 1500));
+            return;
+        }
+        const dirs = fs.readdirSync(outputsRoot, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name)
+            .filter(name => fs.existsSync(path.join(outputsRoot, name, 'metadata.json')) && fs.existsSync(path.join(outputsRoot, name, 'panels')))
+            .sort((a, b) => fs.statSync(path.join(outputsRoot, b)).mtimeMs - fs.statSync(path.join(outputsRoot, a)).mtimeMs);
+
+        if (dirs.length === 0) {
+            console.log(chalk.red('[APP-INFO] No exportable outputs found in outputs/.'));
+            await new Promise(r => setTimeout(r, 1200));
+            return;
+        }
+
+        const chosenDir = await select({
+            message: 'Select an output folder to export as MP4:',
+            choices: dirs.map(n => ({ name: n, value: path.join(outputsRoot, n) }))
+        });
+
+        // Read metadata for defaults
+        let meta = {};
+        try { meta = JSON.parse(fs.readFileSync(path.join(chosenDir, 'metadata.json'), 'utf8')); } catch {}
+        const metaSize = meta.size || '';
+        const defaultSizeLabel = metaSize ? `${metaSize} (from metadata)` : '1080x1920 (default)';
+
+        const sizeChoice = await select({
+            message: `Video size (Current: ${defaultSizeLabel})`,
+            choices: [
+                { name: defaultSizeLabel, value: '' },
+                { name: 'Custom…', value: 'custom' }
+            ]
+        });
+        let size = null;
+        if (sizeChoice === 'custom') {
+            const entered = await input({ message: 'Enter size as WIDTHxHEIGHT (e.g., 1080x1920):', validate: v => /^(\d+)x(\d+)$/.test(v.trim()) || 'Format WIDTHxHEIGHT' });
+            size = entered.trim();
+        }
+
+        const fpsStr = await input({ message: 'FPS (frames per second):', default: '30', validate: v => /^\d+$/.test(v.trim()) || 'Enter integer' });
+        const defaultDur = await input({ message: 'Default seconds per panel:', default: '2.0', validate: v => /^\d+(?:\.\d+)?$/.test(v.trim()) || 'Enter number' });
+
+        // Compute panel list and initial durations (from list.txt if available, else default)
+        const panelsDir = path.join(chosenDir, 'panels');
+        let panelFilesAbs = [];
+        if (Array.isArray(meta.panelFiles) && meta.panelFiles.length) {
+            panelFilesAbs = meta.panelFiles.map(p => path.join(chosenDir, String(p).replace(/\\/g, '/')));
+        } else {
+            panelFilesAbs = fs.readdirSync(panelsDir)
+                .filter(f => /panel-\d+\.png$/i.test(f))
+                .sort()
+                .map(f => path.join(panelsDir, f));
+        }
+        const panelCount = panelFilesAbs.length;
+        const listPath = path.join(panelsDir, 'list.txt');
+        const baseDur = parseFloat(String(defaultDur).trim());
+        let initialDurations = Array(panelCount).fill(baseDur);
+        if (fs.existsSync(listPath)) {
+            try {
+                const txt = fs.readFileSync(listPath, 'utf8');
+                const lines = txt.split(/\r?\n/);
+                const m = new Map();
+                let last = null;
+                for (const line of lines) {
+                    const mf = /^\s*file\s+'([^']+)'\s*$/i.exec(line);
+                    if (mf) { last = mf[1]; continue; }
+                    const md = /^\s*duration\s+([0-9]+(?:\.[0-9]+)?)\s*$/i.exec(line);
+                    if (md && last) { m.set(last.replace(/\\/g, '/'), parseFloat(md[1])); last = null; }
+                }
+                initialDurations = panelFilesAbs.map(p => m.get(path.basename(p)) ?? baseDur);
+            } catch {}
+        }
+
+        let durationsCSV = null;
+        if (panelCount > 0) {
+            const wantsEditDurations = await confirmPrompt({ message: `Edit per-panel durations? (${panelCount} panels)`, default: false });
+            if (wantsEditDurations) {
+                const csvDefault = initialDurations.map(n => n.toFixed(2)).join(',');
+                const entered = await input({ message: `Enter ${panelCount} comma-separated durations:`, default: csvDefault });
+                durationsCSV = String(entered).trim();
+            }
+        }
+
+        const transChoice = await select({
+            message: 'Default transition (applied where metadata not specific):',
+            choices: [
+                { name: 'Auto (use metadata where available; fallback fade)', value: 'auto' },
+                { name: 'Fade', value: 'fade' },
+                { name: 'Fade to Black', value: 'fadeblack' },
+                { name: 'Slide Left', value: 'slideleft' },
+                { name: 'Wipe Left', value: 'wipeleft' },
+                { name: 'None (hard cut)', value: 'none' },
+            ]
+        });
+        const transDur = await input({ message: 'Transition duration (seconds):', default: '0.5', validate: v => /^\d+(?:\.\d+)?$/.test(v.trim()) || 'Enter number' });
+        const kbChoice = await select({
+            message: 'Ken Burns default (applied where metadata not specific):',
+            choices: [
+                { name: 'Auto (use metadata where available; fallback none)', value: 'auto' },
+                { name: 'None', value: 'none' },
+                { name: 'Zoom In', value: 'in' },
+                { name: 'Zoom Out', value: 'out' },
+            ]
+        });
+        const zoomTo = await input({ message: 'Zoom-to factor for in/out:', default: '1.06', validate: v => /^\d+(?:\.\d+)?$/.test(v.trim()) || 'Enter number' });
+
+        const opts = {
+            inputDir: chosenDir,
+            fps: parseInt(fpsStr.trim(), 10),
+            defaultDuration: parseFloat(defaultDur.trim()),
+            transitionDuration: parseFloat(transDur.trim()),
+            zoomTo: parseFloat(zoomTo.trim()),
+        };
+        if (size) opts.size = size;
+        if (transChoice !== 'auto') {
+            opts.transition = transChoice;
+            opts.__flags = { ...(opts.__flags || {}), transitionProvided: true };
+        }
+        if (kbChoice !== 'auto') {
+            opts.kenburns = kbChoice;
+            opts.__flags = { ...(opts.__flags || {}), kenburnsProvided: true };
+        }
+        if (durationsCSV) {
+            opts.durations = durationsCSV;
+            opts.__flags = { ...(opts.__flags || {}), durationsProvided: true };
+            // Persist edited durations to panels/list.txt for future runs
+            try {
+                const durationsArr = durationsCSV.split(',').map(s => parseFloat(String(s).trim())).filter(n => Number.isFinite(n));
+                while (durationsArr.length < panelCount) durationsArr.push(baseDur);
+                durationsArr.length = panelCount;
+                const baseNames = panelFilesAbs.map(p => path.basename(p));
+                const lines = [];
+                for (let i = 0; i < baseNames.length; i++) {
+                    lines.push(`file '${baseNames[i]}'`);
+                    lines.push(`duration ${durationsArr[i].toFixed(3)}`);
+                }
+                if (baseNames.length > 0) lines.push(`file '${baseNames[baseNames.length - 1]}'`);
+                fs.writeFileSync(listPath, lines.join('\n'), 'utf8');
+                console.log(chalk.gray(`[APP-INFO] Saved per-panel durations to ${path.relative(process.cwd(), listPath)}.`));
+            } catch (e) {
+                console.warn(chalk.yellow('[APP-WARN] Could not save durations to panels/list.txt:', e?.message || e));
+            }
+        }
+
+        console.log('[APP-INFO] Starting video export...');
+        const outPath = await exportVideoFromPanels(opts);
+        console.log(chalk.green(`[APP-SUCCESS] Video exported: ${outPath}`));
+    } catch (err) {
+        console.error(chalk.red('[APP-ERROR] Video export failed:'), err?.message || err);
+        await new Promise(r => setTimeout(r, 1500));
+    }
+}
+
+async function queueVideoPostFlow(sessionState) {
+    try {
+        const outputsRoot = path.join(process.cwd(), 'outputs');
+        let candidates = [];
+        if (fs.existsSync(outputsRoot)) {
+            const dirs = fs.readdirSync(outputsRoot, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+            for (const d of dirs) {
+                const dirPath = path.join(outputsRoot, d);
+                const files = fs.readdirSync(dirPath).filter(f => /\.mp4$/i.test(f));
+                for (const f of files) candidates.push(path.join(dirPath, f));
+            }
+        }
+        const choices = [
+            ...candidates.slice(0, 24).map(p => ({ name: path.relative(process.cwd(), p), value: p })),
+            { name: 'Browse… (enter a file path)', value: '__browse__' },
+            { name: 'Cancel', value: '__cancel__' },
+        ];
+        const pick = await select({ message: 'Select a video to post (mp4):', choices });
+        if (pick === '__cancel__') return;
+        let videoAbs = pick;
+        if (pick === '__browse__') {
+            const entered = await input({ message: 'Enter path to an .mp4 file:' });
+            const p = path.resolve(process.cwd(), String(entered || '').trim());
+            if (!fs.existsSync(p) || !/\.mp4$/i.test(p)) {
+                console.log(chalk.red('[APP-ERROR] File not found or not an .mp4.'));
+                await new Promise(r => setTimeout(r, 1200));
+                return;
+            }
+            videoAbs = p;
+        }
+
+        const caption = await editor({ message: 'Enter the caption text for the video post:' });
+        const loggedIn = getLoggedInPlatforms();
+        const platforms = await checkbox({ message: 'Queue for which platforms?', choices: [{name: 'X', value: 'X'}, {name: 'LinkedIn', value: 'LinkedIn'}, {name: 'Bluesky', value: 'Bluesky'}], default: loggedIn, validate: i => i.length > 0 });
+
+        const rel = path.relative(process.cwd(), videoAbs);
+        addJob({
+            topic: caption?.slice(0, 100) || path.basename(videoAbs),
+            summary: caption || '',
+            mediaType: 'video',
+            mediaPath: rel,
+            platforms,
+            profile: sessionState?.prompt?.profilePath ? path.basename(sessionState.prompt.profilePath) : 'default'
+        });
+        console.log(chalk.green('[APP-SUCCESS] Video job queued. Process Scheduled Posts to upload.'));
+    } catch (err) {
+        console.error(chalk.red('[APP-ERROR] Could not queue video post:'), err?.message || err);
+        await new Promise(r => setTimeout(r, 1200));
+    }
 }

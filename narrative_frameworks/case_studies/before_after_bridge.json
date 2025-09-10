@@ -1,5 +1,6 @@
 {
   "name": "Before -> After -> Bridge",
   "description": "Illustrates a clear transformation by showing the starting pain point, the successful outcome, and the method used to get there.",
-  "template": "Structure the post and visuals around the 'Before -> After -> Bridge' framework. The 'Before' is the starting pain or state. The 'After' is the better outcome. The 'Bridge' is the method or steps that connected the two, showing how the transformation was achieved."
+  "template": "Structure the post and visuals around the 'Before -> After -> Bridge' framework. The 'Before' is the starting pain or state. The 'After' is the better outcome. The 'Bridge' is the method or steps that connected the two, showing how the transformation was achieved.",
+  "example": "Before: Our newsletter had a 14% open rate and inconsistent send times.\n\nAfter: 32% open rate for 3 consecutive weeks and +18% click-through.\n\nBridge: 1) Standardized send time (Tues 9am local). 2) Moved CTA to the top 300 characters. 3) A/B tested subject lines with a 10% seed audience before full send."
 }

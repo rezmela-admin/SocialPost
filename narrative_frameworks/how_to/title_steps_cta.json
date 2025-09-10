@@ -1,5 +1,6 @@
 {
   "name": "Playbook: Title -> Steps -> CTA",
   "description": "Creates a mini how-to guide that is easy to follow, save, and share.",
-  "template": "Structure the post as a 'Playbook'. The Title clearly defines the goal and timeframe (e.g., 'How to achieve X in Y days'). The Steps are a numbered list of actions. The CTA (Call to Action) asks the audience to save, share, or try the playbook."
+  "template": "Structure the post as a 'Playbook'. The Title clearly defines the goal and timeframe (e.g., 'How to achieve X in Y days'). The Steps are a numbered list of actions. The CTA (Call to Action) asks the audience to save, share, or try the playbook.",
+  "example": "Title: A 15-minute daily routine to learn JavaScript basics in 21 days.\n\nSteps: 1) Pick one topic (variables, arrays, functions). 2) Watch a 5-minute explainer. 3) Type out a 10-line example from scratch. 4) Change two lines and observe what breaks. 5) Write a 2-sentence note about what you learned.\n\nCTA: Save this and start with 'variables' today—post your 10 lines."
 }

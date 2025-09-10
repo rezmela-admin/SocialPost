@@ -1,5 +1,6 @@
 {
   "name": "Data Point -> Interpretation -> Recommendation",
   "description": "Uses a compelling statistic or result to provide a meaningful insight and a clear recommendation for action.",
-  "template": "Structure the post around the 'Data Point -> Interpretation -> Recommendation' framework. The Data Point is a specific metric or number with context. The Interpretation explains what that data means. The Recommendation is what the audience should do now based on that insight."
+  "template": "Structure the post around the 'Data Point -> Interpretation -> Recommendation' framework. The Data Point is a specific metric or number with context. The Interpretation explains what that data means. The Recommendation is what the audience should do now based on that insight.",
+  "example": "Data Point: 68% of users drop off before a page loads in 3 seconds (n=25k sessions, last 30 days).\n\nInterpretation: Our hero image (1.8MB) is the biggest render-blocking asset on mobile.\n\nRecommendation: Compress images to <200KB, lazy-load below-the-fold media, and set a performance budget of 2s Largest Contentful Paint for new pages."
 }

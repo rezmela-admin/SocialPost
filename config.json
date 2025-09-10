@@ -7,6 +7,7 @@
       "selectors": {
         "fileInput": "[data-testid='primaryColumn'] [data-testid='fileInput']",
         "imagePreview": "div[data-testid='attachments'] img",
+        "mediaPreview": "div[data-testid='attachments'] img, div[data-testid='attachments'] video",
         "textBox": "[data-testid='primaryColumn'] [data-testid='tweetTextarea_0']",
         "postButton": "div[role='dialog'] button:has-text('Post')",
         "confirmationLocator": "[data-testid='toast']"
@@ -22,7 +23,8 @@
         "nextButton": "button:has-text('Next')",
         "textBox": "div[role='textbox']",
         "postButton": "button.share-actions__primary-action",
-        "composeModal": "div[aria-labelledby='share-to-linkedin-modal__header']"
+        "composeModal": "div[aria-labelledby='share-to-linkedin-modal__header']",
+        "mediaPreview": "div[aria-labelledby='share-to-linkedin-modal__header'] video, div[aria-labelledby='share-to-linkedin-modal__header'] img"
       }
     },
     "Bluesky": {

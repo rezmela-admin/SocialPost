@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url';
 import open from 'open';
 import { GoogleGenerativeAIFetchError } from "@google/generative-ai";
 import { jsonrepair } from 'jsonrepair';
+import { spawnSync } from 'child_process';
 
 
 
@@ -350,6 +351,69 @@ export async function getPanelApproval(panel, panelIndex, imageGenerator, config
     }
 
     return { imagePath: approvedImagePath, prompt: panelPrompt };
+}
+
+// Lightweight environment diagnostics for Playwright and FFmpeg.
+export async function checkDependencies(options = {}) {
+    const { quick = false, quiet = false } = options;
+    const results = {
+        playwright: { ok: false, message: '' },
+        ffmpeg: { ok: false, message: '' },
+    };
+
+    // Playwright check: try to import and launch Chromium headless.
+    try {
+        const { chromium } = await import('playwright');
+        try {
+            const browser = await chromium.launch({ headless: true });
+            await browser.close();
+            results.playwright.ok = true;
+            results.playwright.message = 'Playwright ready';
+            if (!quiet && !quick) console.log('[CHECK-OK] Playwright: Ready');
+        } catch (e) {
+            const msg = e?.message || String(e);
+            results.playwright.ok = false;
+            results.playwright.message = msg;
+            if (!quiet) {
+                if (msg.includes('Host system is missing dependencies')) {
+                    console.warn("[CHECK-WARN] Playwright missing OS dependencies. On Debian/Ubuntu: npx playwright install-deps");
+                } else {
+                    console.warn('[CHECK-WARN] Playwright launch failed:', msg);
+                }
+            }
+        }
+    } catch (e) {
+        results.playwright.ok = false;
+        results.playwright.message = 'Playwright not installed';
+        if (!quiet) console.warn('[CHECK-WARN] Playwright not installed. Install with: npm i -D playwright');
+    }
+
+    // FFmpeg check: verify binary is on PATH.
+    try {
+        const res = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+        if (res.status === 0) {
+            results.ffmpeg.ok = true;
+            results.ffmpeg.message = 'FFmpeg found';
+            if (!quiet && !quick) console.log('[CHECK-OK] FFmpeg: Found');
+        } else {
+            results.ffmpeg.ok = false;
+            results.ffmpeg.message = 'ffmpeg not found in PATH';
+            if (!quiet) console.warn('[CHECK-WARN] FFmpeg not found. Install it and ensure ffmpeg is in PATH.');
+        }
+    } catch (e) {
+        results.ffmpeg.ok = false;
+        results.ffmpeg.message = 'ffmpeg not found';
+        if (!quiet) console.warn('[CHECK-WARN] FFmpeg not found. Install it and ensure ffmpeg is in PATH.');
+    }
+
+    if (!quiet && !quick) {
+        console.log('[CHECK-INFO] Summary:', {
+            playwright: results.playwright.ok ? 'ok' : 'missing',
+            ffmpeg: results.ffmpeg.ok ? 'ok' : 'missing',
+        });
+    }
+
+    return results;
 }
 
 export function buildTaskPrompt({ activeProfile, narrativeFrameworkPath, topic }) {

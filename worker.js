@@ -25,7 +25,7 @@ function toSlug(text, maxLen = 80) {
         .slice(0, maxLen) || 'untitled';
 }
 
-async function archivePostedAsset(job, absoluteImagePath, config, errors) {
+async function archivePostedAsset(job, absoluteMediaPath, config, errors) {
     try {
         const root = config.postProcessing?.archiveFolderPath || './post_archive';
         const created = job.createdAt ? new Date(job.createdAt) : new Date();
@@ -37,13 +37,13 @@ async function archivePostedAsset(job, absoluteImagePath, config, errors) {
         const jobDir = path.join(root, yyyy, mm, dd, profile, `${job.id}_${topicSlug}`);
         await fsPromises.mkdir(jobDir, { recursive: true });
 
-        // Move image
-        const imageExt = path.extname(absoluteImagePath) || '.png';
-        const destImagePath = path.join(jobDir, `image${imageExt}`);
-        await fsPromises.rename(absoluteImagePath, destImagePath);
+        // Move media (image or video)
+        const mediaExt = path.extname(absoluteMediaPath) || '.bin';
+        const destMediaPath = path.join(jobDir, `asset${mediaExt}`);
+        await fsPromises.rename(absoluteMediaPath, destMediaPath);
 
         // Move optional PDF (same basename, .pdf)
-        const pdfCandidate = absoluteImagePath.replace(/\.[^.]+$/, '.pdf');
+        const pdfCandidate = absoluteMediaPath.replace(/\.[^.]+$/, '.pdf');
         try {
             await fsPromises.access(pdfCandidate);
             const destPdfPath = path.join(jobDir, 'image.pdf');
@@ -63,10 +63,14 @@ async function archivePostedAsset(job, absoluteImagePath, config, errors) {
             processedAt: job.processedAt || new Date().toISOString(),
             status: 'completed',
             errors: errors || [],
-            files: {
-                image: path.basename(destImagePath),
-                pdf: 'image.pdf'
-            },
+            files: (() => {
+                const isVideo = ['.mp4','.mov','.webm'].includes(mediaExt.toLowerCase());
+                const files = { asset: path.basename(destMediaPath) };
+                if (!isVideo) files.image = path.basename(destMediaPath);
+                else files.video = path.basename(destMediaPath);
+                files.pdf = 'image.pdf';
+                return files;
+            })(),
             archiveVersion: 1
         };
         await fsPromises.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
@@ -79,7 +83,8 @@ async function archivePostedAsset(job, absoluteImagePath, config, errors) {
 // --- Configuration Loading ---
 async function loadConfig() {
     try {
-        const configFileContent = await fsPromises.readFile('./config.json', 'utf8');
+        const cfgPath = process.env.CONFIG_PATH || path.join(process.cwd(), 'config.json');
+        const configFileContent = await fsPromises.readFile(cfgPath, 'utf8');
         return JSON.parse(configFileContent);
     } catch (error) {
         console.error("[WORKER-FATAL] Error loading or parsing config.json:", error);
@@ -99,20 +104,26 @@ async function postToBluesky(job, config) {
     const agent = new BskyAgent({ service: config.socialMedia.Bluesky.serviceUrl });
     await agent.login({ identifier: handle, password: appPassword });
     
-    const absoluteImagePath = path.join(process.cwd(), job.imagePath);
+    const mediaPath = job.mediaPath || job.imagePath;
+    const absoluteMediaPath = path.join(process.cwd(), mediaPath);
+    const ext = (path.extname(mediaPath) || '').toLowerCase();
+    const isVideo = ['.mp4','.mov','.webm'].includes(ext);
+    if (isVideo) {
+        throw new Error('Bluesky video posting is not supported by this worker yet.');
+    }
     
     let imageBuffer;
-    const stats = await fsPromises.stat(absoluteImagePath);
+    const stats = await fsPromises.stat(absoluteMediaPath);
     const fileSizeInMB = stats.size / (1024 * 1024);
 
     if (fileSizeInMB > 0.95) { // Check if file size is > 0.95MB
         console.log(`[WORKER-INFO] Image is ${fileSizeInMB.toFixed(2)}MB, resizing for Bluesky...`);
-        imageBuffer = await sharp(absoluteImagePath)
+        imageBuffer = await sharp(absoluteMediaPath)
             .resize(1024, null, { withoutEnlargement: true }) // Resize width to 1024px
             .jpeg({ quality: 85 }) // Convert to JPEG for smaller size
             .toBuffer();
     } else {
-        imageBuffer = await fsPromises.readFile(absoluteImagePath);
+        imageBuffer = await fsPromises.readFile(absoluteMediaPath);
     }
 
     const uploadResponse = await agent.uploadBlob(imageBuffer, { encoding: 'image/jpeg' });
@@ -128,8 +139,11 @@ async function postToBluesky(job, config) {
 
 // --- Generic Posting Logic ---
 async function postToPlatform(page, job, platformConfig, timeouts) {
-    const absoluteImagePath = path.join(process.cwd(), job.imagePath);
-    const { summary, imagePath } = job;
+    const mediaPath = job.mediaPath || job.imagePath;
+    const absoluteMediaPath = path.join(process.cwd(), mediaPath);
+    const { summary } = job;
+    const ext = (path.extname(mediaPath) || '').toLowerCase();
+    const isVideo = ['.mp4','.mov','.webm'].includes(ext);
     const { composeUrl, selectors } = platformConfig;
 
     console.log(`[WORKER-INFO] Navigating to compose URL: ${composeUrl}`);
@@ -141,27 +155,28 @@ async function postToPlatform(page, job, platformConfig, timeouts) {
         await page.locator(selectors.startPostButton).click({ timeout: timeouts.selector });
     }
 
-    // Uploading the image
-    console.log("[WORKER-INFO] Preparing to upload image...");
+    // Uploading the media (image or video)
+    console.log("[WORKER-INFO] Preparing to upload media...");
     if (selectors.fileInput) {
         // Direct file input (e.g., X)
         await page.waitForSelector(selectors.fileInput, { state: 'attached', timeout: timeouts.selector });
         // Use the generic selector for X, as it's more reliable.
         if (platformConfig.composeUrl.includes('x.com')) {
-            await page.setInputFiles('input[type="file"]', absoluteImagePath, { timeout: timeouts.selector });
+            await page.setInputFiles('input[type="file"]', absoluteMediaPath, { timeout: timeouts.selector });
         } else {
-            await page.locator(selectors.fileInput).setInputFiles(absoluteImagePath, { timeout: timeouts.selector });
+            await page.locator(selectors.fileInput).setInputFiles(absoluteMediaPath, { timeout: timeouts.selector });
         }
     } else if (selectors.addMediaButton) {
         // File chooser dialog (e.g., LinkedIn)
         const fileChooserPromise = page.waitForEvent('filechooser', { timeout: timeouts.selector });
         await page.locator(selectors.addMediaButton).click({ timeout: timeouts.selector });
         const fileChooser = await fileChooserPromise;
-        await fileChooser.setFiles(absoluteImagePath);
+        await fileChooser.setFiles(absoluteMediaPath);
     }
-     if (selectors.imagePreview) {
-        console.log("[WORKER-INFO] Waiting for image to be processed...");
-        await page.waitForSelector(selectors.imagePreview, { state: 'visible', timeout: timeouts.selector });
+     const previewSelector = selectors.mediaPreview || (isVideo ? selectors.videoPreview : selectors.imagePreview);
+     if (previewSelector) {
+        console.log("[WORKER-INFO] Waiting for media to be processed...");
+        await page.waitForSelector(previewSelector, { state: 'visible', timeout: timeouts.selector });
     }
 
     // Optional: Click a 'Next' button after upload if necessary
@@ -292,25 +307,26 @@ async function processJob(job, config) {
 
     // Post-processing (cleanup)
     if (overallSuccess && (!config.debug || !config.debug.preserveTemporaryFiles)) {
-        const absoluteImagePath = path.join(process.cwd(), job.imagePath);
+        const mediaPath = job.mediaPath || job.imagePath;
+        const absoluteMediaPath = path.join(process.cwd(), mediaPath);
         try {
-            await fsPromises.access(absoluteImagePath);
+            await fsPromises.access(absoluteMediaPath);
             const action = config.postProcessing?.actionAfterSuccess || 'delete';
             if (action === 'backup') {
                 const backupDir = config.postProcessing?.backupFolderPath || './post_backups';
                 await fsPromises.mkdir(backupDir, { recursive: true });
-                const backupPath = path.join(backupDir, path.basename(job.imagePath));
-                await fsPromises.rename(absoluteImagePath, backupPath);
+                const backupPath = path.join(backupDir, path.basename(mediaPath));
+                await fsPromises.rename(absoluteMediaPath, backupPath);
                 console.log(`[WORKER-INFO] Image for job ${job.id} backed up to: ${backupPath}`);
             } else if (action === 'archive') {
-                await archivePostedAsset(jobToUpdate || job, absoluteImagePath, config, errors);
+                await archivePostedAsset(jobToUpdate || job, absoluteMediaPath, config, errors);
             } else {
-                await fsPromises.unlink(absoluteImagePath);
+                await fsPromises.unlink(absoluteMediaPath);
                 console.log(`[WORKER-INFO] Image for job ${job.id} deleted.`);
             }
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                console.warn(`[WORKER-WARN] Could not clean up file ${job.imagePath}:`, error);
+                console.warn(`[WORKER-WARN] Could not clean up file ${mediaPath}:`, error);
             }
         }
     }

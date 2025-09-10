@@ -1,5 +1,6 @@
 {
   "name": "Contrarian -> Evidence -> What To Do",
   "description": "Captures attention with a contrarian viewpoint and backs it up with substantive evidence to offer a practical next step.",
-  "template": "Structure the post around the 'Contrarian -> Evidence -> What To Do' framework. The Contrarian is a spicy or unconventional claim. The Evidence provides an example, data, or anecdote to support it. 'What to do' gives the reader a practical action based on this new perspective."
+  "template": "Structure the post around the 'Contrarian -> Evidence -> What To Do' framework. The Contrarian is a spicy or unconventional claim. The Evidence provides an example, data, or anecdote to support it. 'What to do' gives the reader a practical action based on this new perspective.",
+  "example": "Contrarian: Shipping fast is safer than perfecting in private.\n\nEvidence: Our v0 CLI had 5 bugs, but user feedback in week 1 revealed the 2 must‑have flags we hadn’t considered—usage jumped 3× after adding them.\n\nWhat To Do: Ship a thin slice by Friday, tell users how to report issues, and commit to a Monday patch."
 }

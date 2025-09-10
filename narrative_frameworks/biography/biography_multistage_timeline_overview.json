@@ -1,5 +1,6 @@
 {
   "name": "Biography: Timeline Overview (Origin -> Turning Points -> Legacy)",
   "description": "Summarize the full arc with 4–6 dated nodes that trace the person’s trajectory.",
-  "template": "Structure the post as a compact timeline: Origin, First Breakthrough, Rise/Peak, Setback/Reinvention, Later Years, Legacy. Use 4–6 dated nodes with one crisp line each (year, place, what happened, why it mattered). Keep descriptions specific and scannable; avoid fluff. For a comic, arrange visuals as a horizontal or vertical timeline with era cues and small scene icons per node."
+  "template": "Structure the post as a compact timeline: Origin, First Breakthrough, Rise/Peak, Setback/Reinvention, Later Years, Legacy. Use 4–6 dated nodes with one crisp line each (year, place, what happened, why it mattered). Keep descriptions specific and scannable; avoid fluff. For a comic, arrange visuals as a horizontal or vertical timeline with era cues and small scene icons per node.",
+  "example": "Timeline:\n• 2010 — Origin: First Android app built in a dorm; 1,000 downloads teach the basics.\n• 2014 — Breakthrough: Launched a budgeting app after own finances derailed; hit #2 in niche category.\n• 2017 — Rise: Bootstrapped to 50k MAU; newsletter + tutorials grow community.\n• 2019 — Setback: API price hike breaks free tier; churn spikes.\n• 2020 — Reinvention: Moved to local-first sync; performance improves and costs drop.\n• 2023 — Legacy: Open-sourced sync engine; adopted by other indie tools."
 }

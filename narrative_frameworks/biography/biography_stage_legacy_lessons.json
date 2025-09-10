@@ -1,5 +1,6 @@
 {
   "name": "Biography Stage: Legacy and Lessons",
   "description": "What endures today: influence, principles, controversies, and practical takeaways.",
-  "template": "Structure the post around 'Legacy and Lessons'. Synthesize what endures (ideas, techniques, institutions, cultural impact); name 2–3 specific principles others still apply; briefly acknowledge any unresolved controversies for nuance; and end with a clear, modern takeaway for your audience. Avoid hagiography; be concrete. For a comic, visualize ripple effects: artifacts, successors, timelines, or a 'tools on the table' motif showing what remains in use."
+  "template": "Structure the post around 'Legacy and Lessons'. Synthesize what endures (ideas, techniques, institutions, cultural impact); name 2–3 specific principles others still apply; briefly acknowledge any unresolved controversies for nuance; and end with a clear, modern takeaway for your audience. Avoid hagiography; be concrete. For a comic, visualize ripple effects: artifacts, successors, timelines, or a 'tools on the table' motif showing what remains in use.",
+  "example": "What Endures: A culture of small, documented tools that others can remix.\n\nPrinciples: (1) Start with the smallest useful thing. (2) Write docs like you're teaching a friend. (3) Accessibility is a feature, not an afterthought.\n\nNuance: Critics argue the minimalist approach can overlook enterprise needs; both can be true depending on context.\n\nModern Takeaway: Default to small, composable pieces—scale only after use validates the need."
 }

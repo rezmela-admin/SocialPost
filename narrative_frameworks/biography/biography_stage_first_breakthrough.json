@@ -1,5 +1,6 @@
 {
   "name": "Biography Stage: First Breakthrough",
   "description": "The pivotal decision, release, or event that changed trajectory.",
-  "template": "Structure the post around 'First Breakthrough'. Specify the year and immediate context; the risk taken or obstacle overcome; exactly what was shipped/decided/delivered; one concrete reaction signal (review, chart, award, sales spike, headline, or quote); and the short-term consequence. Keep it specific and dated. For a comic, show the moment of decision contrasted with the first public response (e.g., stage/crowd, newsroom, storefront, or dashboard)."
+  "template": "Structure the post around 'First Breakthrough'. Specify the year and immediate context; the risk taken or obstacle overcome; exactly what was shipped/decided/delivered; one concrete reaction signal (review, chart, award, sales spike, headline, or quote); and the short-term consequence. Keep it specific and dated. For a comic, show the moment of decision contrasted with the first public response (e.g., stage/crowd, newsroom, storefront, or dashboard).",
+  "example": "Year & Context: 2018 — freelancing between contracts, debating whether to productize a client script.\n\nRisk: Turned down a retainer to build a $29 plugin in two weeks.\n\nShipped: A fallback image loader for slow mobile networks.\n\nReaction: Featured in a popular dev newsletter; 500 sales weekend one.\n\nShort-term: Paid rent, doubled down on the product, and started a mailing list."
 }

@@ -16,8 +16,10 @@ export async function editTopic(initialTopic, options = {}) {
     }
 
     while (isEditing) {
+        const firstLine = String(currentTopic).split('\n')[0];
+        const preview = firstLine.length > 80 ? firstLine.slice(0, 80) + '…' : firstLine;
         const choice = await select({
-            message: `Current Topic: "${currentTopic}"`,
+            message: `Current Topic: "${preview}"`,
             choices: [
                 { name: 'Approve', value: 'approve' },
                 { name: 'Edit', value: 'edit' },
