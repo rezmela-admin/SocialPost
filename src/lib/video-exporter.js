@@ -112,6 +112,7 @@ export async function exportVideoFromPanels(options = {}) {
     __flags = {}, // internal: which options were explicitly provided
     dryRun = false,
     strict = true,
+    audio = null, // optional path to narration audio to mux
   } = options;
 
   if (!inputDir) throw new Error('inputDir is required');
@@ -257,6 +258,10 @@ export async function exportVideoFromPanels(options = {}) {
   panelFiles.forEach((file, i) => {
     args.push('-loop', '1', '-t', String(durationsSec[i].toFixed(3)), '-i', file);
   });
+  const audioInputIndex = panelFiles.length;
+  if (audio) {
+    args.push('-i', audio);
+  }
 
   // Build filter_complex
   const vlabels = [];
@@ -325,8 +330,14 @@ export async function exportVideoFromPanels(options = {}) {
   const filterComplex = filterParts.join(';');
   args.push('-filter_complex', filterComplex);
   args.push('-map', `[${lastLabel}]`);
+  if (audio) {
+    args.push('-map', `${audioInputIndex}:a:0?`);
+  }
   args.push('-r', String(fps));
   args.push('-c:v', 'libx264', '-crf', String(qualityCRF), '-preset', preset, '-pix_fmt', 'yuv420p');
+  if (audio) {
+    args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
+  }
   args.push(outPath);
 
   if (dryRun) {
@@ -372,6 +383,7 @@ export function buildExportOptionsFromArgs(argv) {
       case '--dry-run': opts.dryRun = true; break;
       case '--strict': opts.strict = true; break;
       case '--no-strict': opts.strict = false; break;
+      case '--audio': opts.audio = eat(); break;
     }
   }
   return opts;
@@ -390,6 +402,7 @@ Output:
       --fps <n>             Frames per second (default: 30)
       --crf <n>             x264 CRF quality 0-51 lower=better (default: 20)
       --preset <p>          x264 preset (ultrafast..veryslow) (default: medium)
+      --audio <file>        Optional narration audio to mux (AAC encoded)
       --strict / --no-strict  Enable or disable strict validation (default: strict on)
 
 Timing and transitions:

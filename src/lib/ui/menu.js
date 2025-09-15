@@ -471,6 +471,7 @@ export function mainMenu(sessionState, imageGenerator) {
                 { name: 'Graphic Styles (visual treatment)', value: 'browseStyles', submenu: buildStylesMenu() },
                 { name: 'Characters (visual blueprints)', value: 'browseCharacters', submenu: buildCharactersMenu() },
                 { name: 'Export Video (FFmpeg from panels)', value: 'exportVideo', action: async () => { await exportVideoFlow(); } },
+                { name: 'Export Video with Narration (one‑shot)', value: 'exportVideoWithAudio', action: async () => { await makeVideoWithAudioFlow(); } },
                 { name: 'Queue Video Post (upload mp4 like image)', value: 'queueVideoPost', action: async () => { await queueVideoPostFlow(sessionState); } },
             ]
         };
@@ -647,6 +648,183 @@ async function exportVideoFlow() {
         console.log(chalk.green(`[APP-SUCCESS] Video exported: ${outPath}`));
     } catch (err) {
         console.error(chalk.red('[APP-ERROR] Video export failed:'), err?.message || err);
+        await new Promise(r => setTimeout(r, 1500));
+    }
+}
+
+async function makeVideoWithAudioFlow() {
+    try {
+        const outputsRoot = path.join(process.cwd(), 'outputs');
+        if (!fs.existsSync(outputsRoot)) {
+            console.log(chalk.red('[APP-ERROR] outputs/ folder not found. Generate a comic first.'));
+            await new Promise(r => setTimeout(r, 1500));
+            return;
+        }
+        const dirs = fs.readdirSync(outputsRoot, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name)
+            .filter(name => fs.existsSync(path.join(outputsRoot, name, 'metadata.json')) && fs.existsSync(path.join(outputsRoot, name, 'panels')))
+            .sort((a, b) => fs.statSync(path.join(outputsRoot, b)).mtimeMs - fs.statSync(path.join(outputsRoot, a)).mtimeMs);
+
+        if (dirs.length === 0) {
+            console.log(chalk.red('[APP-INFO] No exportable outputs found in outputs/.'));
+            await new Promise(r => setTimeout(r, 1200));
+            return;
+        }
+
+        const chosenDir = await select({
+            message: 'Select an output folder to export as MP4 (with narration):',
+            choices: dirs.map(n => ({ name: n, value: path.join(outputsRoot, n) }))
+        });
+
+        // Read metadata for defaults
+        let meta = {};
+        try { meta = JSON.parse(fs.readFileSync(path.join(chosenDir, 'metadata.json'), 'utf8')); } catch {}
+        const metaSize = meta.size || '';
+        const defaultSizeLabel = metaSize ? `${metaSize} (from metadata)` : '1080x1920 (default)';
+
+        const sizeChoice = await select({
+            message: `Video size (Current: ${defaultSizeLabel})`,
+            choices: [
+                { name: defaultSizeLabel, value: '' },
+                { name: 'Custom…', value: 'custom' }
+            ]
+        });
+        let size = null;
+        if (sizeChoice === 'custom') {
+            const entered = await input({ message: 'Enter size as WIDTHxHEIGHT (e.g., 1080x1920):', validate: v => /^(\d+)x(\d+)$/.test(v.trim()) || 'Format WIDTHxHEIGHT' });
+            size = entered.trim();
+        }
+
+        const fpsStr = await input({ message: 'FPS (frames per second):', default: '30', validate: v => /^\d+$/.test(v.trim()) || 'Enter integer' });
+        const defaultDur = await input({ message: 'Default seconds per panel:', default: '2.0', validate: v => /^\d+(?:\.\d+)?$/.test(v.trim()) || 'Enter number' });
+
+        // Compute panel list and initial durations (from list.txt if available, else default)
+        const panelsDir = path.join(chosenDir, 'panels');
+        let panelFilesAbs = [];
+        if (Array.isArray(meta.panelFiles) && meta.panelFiles.length) {
+            panelFilesAbs = meta.panelFiles.map(p => path.join(chosenDir, String(p).replace(/\\/g, '/')));
+        } else {
+            panelFilesAbs = fs.readdirSync(panelsDir)
+                .filter(f => /panel-\d+\.png$/i.test(f))
+                .sort()
+                .map(f => path.join(panelsDir, f));
+        }
+        const panelCount = panelFilesAbs.length;
+        const listPath = path.join(panelsDir, 'list.txt');
+        const baseDur = parseFloat(String(defaultDur).trim());
+        let initialDurations = Array(panelCount).fill(baseDur);
+        if (fs.existsSync(listPath)) {
+            try {
+                const txt = fs.readFileSync(listPath, 'utf8');
+                const lines = txt.split(/\r?\n/);
+                const m = new Map();
+                let last = null;
+                for (const line of lines) {
+                    const mf = /^\s*file\s+'([^']+)'\s*$/i.exec(line);
+                    if (mf) { last = mf[1]; continue; }
+                    const md = /^\s*duration\s+([0-9]+(?:\.[0-9]+)?)\s*$/i.exec(line);
+                    if (md && last) { m.set(last.replace(/\\/g, '/'), parseFloat(md[1])); last = null; }
+                }
+                initialDurations = panelFilesAbs.map(p => m.get(path.basename(p)) ?? baseDur);
+            } catch {}
+        }
+
+        let durationsCSV = null;
+        if (panelCount > 0) {
+            const wantsEditDurations = await confirmPrompt({ message: `Edit per-panel durations? (${panelCount} panels)`, default: false });
+            if (wantsEditDurations) {
+                const csvDefault = initialDurations.map(n => n.toFixed(2)).join(',');
+                const entered = await input({ message: `Enter ${panelCount} comma-separated durations:`, default: csvDefault });
+                durationsCSV = String(entered).trim();
+            }
+        }
+
+        const transChoice = await select({
+            message: 'Default transition (applied where metadata not specific):',
+            choices: [
+                { name: 'Auto (use metadata where available; fallback fade)', value: 'auto' },
+                { name: 'Fade', value: 'fade' },
+                { name: 'Fade to Black', value: 'fadeblack' },
+                { name: 'Slide Left', value: 'slideleft' },
+                { name: 'Wipe Left', value: 'wipeleft' },
+                { name: 'None (hard cut)', value: 'none' },
+            ]
+        });
+        const transDur = await input({ message: 'Transition duration (seconds):', default: '0.5', validate: v => /^\d+(?:\.\d+)?$/.test(v.trim()) || 'Enter number' });
+        const kbChoice = await select({
+            message: 'Ken Burns default (applied where metadata not specific):',
+            choices: [
+                { name: 'Auto (use metadata where available; fallback none)', value: 'auto' },
+                { name: 'None', value: 'none' },
+                { name: 'Zoom In', value: 'in' },
+                { name: 'Zoom Out', value: 'out' },
+            ]
+        });
+        const zoomTo = await input({ message: 'Zoom-to factor for in/out:', default: '1.06', validate: v => /^\d+(?:\.\d+)?$/.test(v.trim()) || 'Enter number' });
+
+        // Audio selection
+        const defaultAudio = path.join(chosenDir, 'narration.wav');
+        const audioExists = fs.existsSync(defaultAudio);
+        const audioMode = await select({
+            message: 'Narration audio:',
+            choices: [
+                { name: audioExists ? 'Use narration.wav if present; generate TTS if missing' : 'Generate narration via TTS', value: 'auto' },
+                { name: 'Always regenerate narration via TTS', value: 'force' },
+                { name: 'Use a custom audio file…', value: 'custom' },
+                { name: 'Cancel', value: '__cancel__' },
+            ]
+        });
+        if (audioMode === '__cancel__') return;
+        let customAudio = null;
+        let voices = '';
+        let ttsModel = 'gemini-2.5-pro-preview-tts';
+        if (audioMode === 'custom') {
+            const entered = await input({ message: 'Enter path to an audio file (wav/mp3/m4a/aac):' });
+            const p = path.resolve(process.cwd(), String(entered || '').trim());
+            if (!fs.existsSync(p)) {
+                console.log(chalk.red('[APP-ERROR] File not found.'));
+                await new Promise(r => setTimeout(r, 1200));
+                return;
+            }
+            customAudio = p;
+        } else {
+            // Ask optional voices/model
+            voices = await input({ message: 'TTS voices (CSV) — leave blank for defaults:', default: '' });
+            ttsModel = await input({ message: 'TTS model id:', default: 'gemini-2.5-pro-preview-tts' });
+        }
+
+        // Build one-shot command
+        const args = ['scripts/make-video-with-audio.js', '-i', chosenDir];
+        if (size) { args.push('--size', size); }
+        if (fpsStr) { args.push('--fps', String(parseInt(fpsStr.trim(), 10))); }
+        if (durationsCSV) { args.push('--durations', durationsCSV); }
+        else if (defaultDur) { args.push('--duration', String(parseFloat(defaultDur.trim()))); }
+        if (transChoice !== 'auto') { args.push('--transition', transChoice); }
+        if (transDur) { args.push('--trans-duration', String(parseFloat(transDur.trim()))); }
+        if (kbChoice !== 'auto') { args.push('--kenburns', kbChoice); }
+        if (zoomTo) { args.push('--zoom-to', String(parseFloat(zoomTo.trim()))); }
+
+        if (audioMode === 'custom' && customAudio) {
+            args.push('--narration', customAudio);
+        } else {
+            if (audioMode === 'force') args.push('--force-tts');
+            if (voices && voices.trim()) { args.push('--voices', voices.trim()); }
+            if (ttsModel && ttsModel.trim()) { args.push('--model', ttsModel.trim()); }
+        }
+
+        console.log('[APP-INFO] Running one‑shot export (video + narration)...');
+        await new Promise((resolve, reject) => {
+            const child = spawn('node', args, { stdio: 'inherit' });
+            child.on('error', reject);
+            child.on('exit', (code) => {
+                if (code === 0) resolve();
+                else reject(new Error(`one-shot exporter exited with code ${code}`));
+            });
+        });
+        console.log(chalk.green('[APP-SUCCESS] One‑shot export complete.'));
+    } catch (err) {
+        console.error(chalk.red('[APP-ERROR] One‑shot export failed:'), err?.message || err);
         await new Promise(r => setTimeout(r, 1500));
     }
 }

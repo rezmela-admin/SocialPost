@@ -158,6 +158,22 @@ Behavior notes:
 - If `metadata.json.panelDetails` contains lines like "Visual transition into next panel: push-in", the exporter auto-maps hints to transitions and per-panel Ken Burns when you don’t explicitly pass `--transitions`/`--kenburns`.
  - Strict mode (default) validates inputs and forces even output dimensions; if you supply an odd width/height, it adjusts to the nearest even for encoder compatibility.
 
+### One‑Shot: TTS Narration + Export
+
+To generate narration audio (Gemini TTS) and export the MP4 in one go:
+
+```bash
+node scripts/make-video-with-audio.js -i outputs/<your-comic-folder> \
+  --voices Zephyr,Puck --transition slideleft --trans-duration 0.5 \
+  --kenburns in --zoom-to 1.08
+```
+
+Notes:
+- If `<input>/narration.wav` exists, it’s reused. Add `--force-tts` to regenerate, or `--skip-tts` to never run TTS.
+- Provide a custom audio with `--narration <file>`.
+- All regular exporter flags apply (e.g., `--durations`, `--size`, `--fps`).
+- Requires `GEMINI_API_KEY` for TTS and `ffmpeg` on PATH.
+
 ## Story Patterns & Examples
 
 The app supports reusable storytelling structures (“Story Patterns”) stored under `narrative_frameworks/` as JSON files. Each file typically has these keys:

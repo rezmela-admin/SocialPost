@@ -19,6 +19,30 @@ import {
     getPostApproval
 } from './utils.js';
 
+// Build simple narration text per panel and helpers to persist in multiple formats
+function buildNarrationSegmentsFromPanels(panels) {
+    const segments = [];
+    for (let i = 0; i < (panels?.length || 0); i++) {
+        const p = panels[i] || {};
+        const parts = [];
+        if (Array.isArray(p.dialogue) && p.dialogue.length) {
+            for (const d of p.dialogue) {
+                const who = (d && d.character) ? String(d.character).trim() : '';
+                const speech = (d && d.speech) ? String(d.speech).trim() : '';
+                if (who && speech) parts.push(`${who}: ${speech}`);
+                else if (speech) parts.push(speech);
+            }
+        }
+        if (parts.length === 0) {
+            const desc = p.panel_description || p.description || '';
+            if (desc) parts.push(String(desc).trim());
+        }
+        const text = parts.join(' ');
+        segments.push({ index: i + 1, text });
+    }
+    return segments;
+}
+
 export async function generateAndQueueComicStrip(sessionState, postDetails, imageGenerator) {
     const narrativeFrameworkPath = sessionState.narrativeFrameworkPath;
     debugLog(sessionState, "Entered generateAndQueueComicStrip function.");
@@ -137,6 +161,29 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
 
         console.log(`[APP-SUCCESS] Final comic strip saved to: ${finalImagePath}`);
 
+        // Build and save narration files (txt/json) for TTS/back-end audio generation
+        try {
+            const narrationSegments = buildNarrationSegmentsFromPanels(panels || []);
+            const defaultDur = 2.0; // keep aligned with video-exporter default
+
+            const baseDir = path.dirname(finalImagePath);
+            const baseName = path.basename(finalImagePath, path.extname(finalImagePath));
+            const narrTxtPath = path.join(baseDir, `${baseName}.narration.txt`);
+            const narrJsonPath = path.join(baseDir, `${baseName}.narration.json`);
+
+            const plainTxt = [
+                `Topic: ${postDetails.topic}`,
+                summary ? `Summary: ${summary}` : null,
+                '',
+                ...narrationSegments.map(seg => `Panel ${seg.index}: ${seg.text}`),
+            ].filter(Boolean).join('\n');
+            fs.writeFileSync(narrTxtPath, plainTxt);
+            fs.writeFileSync(narrJsonPath, JSON.stringify({ topic: postDetails.topic, summary, defaultDurationSec: defaultDur, segments: narrationSegments }, null, 2));
+            console.log(`[APP-INFO] Saved narration files:`, narrTxtPath, narrJsonPath);
+        } catch (e) {
+            console.warn('[APP-WARN] Failed to create narration files:', e?.message || e);
+        }
+
         const keepPanels = !!(sessionState?.debug && sessionState.debug.preserveTemporaryFiles);
         if (keepPanels) {
             try {
@@ -177,6 +224,21 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
                 };
                 fs.writeFileSync(path.join(outDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
                 console.log(`[APP-INFO] Kept panels and metadata in: ${outDir}`);
+
+                // Also place narration artifacts into the archive folder for downstream processing
+                try {
+                    const narrationSegments = buildNarrationSegmentsFromPanels(panels || []);
+                    const defaultDur = 2.0;
+                    fs.writeFileSync(path.join(outDir, 'narration.txt'), [
+                        `Topic: ${postDetails.topic}`,
+                        summary ? `Summary: ${summary}` : null,
+                        '',
+                        ...narrationSegments.map(seg => `Panel ${seg.index}: ${seg.text}`),
+                    ].filter(Boolean).join('\n'));
+                    fs.writeFileSync(path.join(outDir, 'narration.json'), JSON.stringify({ topic: postDetails.topic, summary, defaultDurationSec: defaultDur, segments: narrationSegments }, null, 2));
+                } catch (e) {
+                    console.warn('[APP-WARN] Failed to archive narration files:', e?.message || e);
+                }
             } catch (e) {
                 console.warn('[APP-WARN] Failed to archive panels/metadata:', e?.message || e);
             }
