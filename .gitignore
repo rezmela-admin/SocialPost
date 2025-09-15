@@ -26,6 +26,7 @@ Error.txt
 temp_panel_*.png
 *.png
 /plans/
+final-webtoon-*
 
 # OS-specific
 .DS_Store
@@ -39,7 +40,12 @@ Thumbs.db
 /backups/
 /plans/Error.txt
 final-comic-*.pdf
-\n# Ignore post archives and temporary files\npost_archive/\npost-image-*.pdf\nError.txt\nCOMMIT_MESSAGE.txt
+
+# Ignore post archives and temporary files
+post_archive/
+post-image-*.pdf
+Error.txt
+COMMIT_MESSAGE.txt
 post_archive/
 /.codex/
 /.gemini/
