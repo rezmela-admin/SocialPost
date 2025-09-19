@@ -43,10 +43,95 @@ function buildNarrationSegmentsFromPanels(panels) {
     return segments;
 }
 
+function formatPanelPreview(panel) {
+    const description = panel?.panel_description || panel?.description || '';
+    const characters = Array.isArray(panel?.characters) ? panel.characters : [];
+    const dialogue = Array.isArray(panel?.dialogue) ? panel.dialogue : [];
+    const lines = [];
+    if (description) {
+        lines.push(`Description: ${description}`);
+    }
+    if (characters.length) {
+        lines.push('Characters:');
+        characters.forEach((charObj, idx) => {
+            const name = charObj?.name || `Character ${idx + 1}`;
+            const desc = charObj?.description || '';
+            lines.push(`  - ${name}${desc ? ` — ${desc}` : ''}`);
+        });
+    }
+    if (dialogue.length) {
+        lines.push('Dialogue:');
+        dialogue.forEach((dialogObj, idx) => {
+            const speaker = dialogObj?.character || 'Narrator';
+            const speech = dialogObj?.speech || '';
+            lines.push(`  ${idx + 1}. ${speaker}: ${speech}`);
+        });
+    }
+    if (!lines.length) {
+        lines.push('(No description or dialogue returned.)');
+    }
+    return lines.join('\n');
+}
+
+async function reviewComicPanels(panels) {
+    const reviewed = [];
+    for (let i = 0; i < panels.length; i++) {
+        let currentPanel = (panels[i] && typeof panels[i] === 'object') ? JSON.parse(JSON.stringify(panels[i])) : {};
+
+        while (true) {
+            console.log(`\n[APP-REVIEW] Panel ${i + 1} script:`);
+            console.log(formatPanelPreview(currentPanel));
+
+            const action = await select({
+                message: `Panel ${i + 1}: Approve, edit, or cancel?`,
+                choices: [
+                    { name: 'Approve panel script', value: 'approve' },
+                    { name: 'Edit panel JSON', value: 'edit' },
+                    { name: 'Cancel comic generation', value: 'cancel' },
+                ],
+                default: 'approve'
+            });
+
+            if (action === 'approve') {
+                reviewed.push(currentPanel);
+                break;
+            }
+
+            if (action === 'cancel') {
+                return null;
+            }
+
+            if (action === 'edit') {
+                const template = JSON.stringify(currentPanel, null, 2);
+                const edited = await editor({
+                    message: `Edit Panel ${i + 1} JSON (must remain valid):`,
+                    default: template
+                });
+                try {
+                    const parsed = JSON.parse(edited);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        throw new Error('Panel must be a JSON object');
+                    }
+                    if (parsed.dialogue && !Array.isArray(parsed.dialogue)) {
+                        throw new Error('dialogue must be an array');
+                    }
+                    if (parsed.characters && !Array.isArray(parsed.characters)) {
+                        throw new Error('characters must be an array');
+                    }
+                    currentPanel = parsed;
+                } catch (err) {
+                    console.error(`[APP-ERROR] Could not parse edited panel: ${err?.message || err}`);
+                }
+            }
+        }
+    }
+    return reviewed;
+}
+
 export async function generateAndQueueComicStrip(sessionState, postDetails, imageGenerator) {
     const narrativeFrameworkPath = sessionState.narrativeFrameworkPath;
     debugLog(sessionState, "Entered generateAndQueueComicStrip function.");
-    
+
     const activeProfile = sessionState.prompt;
     if (!activeProfile || !activeProfile.profilePath) {
         console.error("[APP-FATAL] No Comic Format selected. Open 'Comic Format' from the main menu and load a profile.");
@@ -109,6 +194,13 @@ export async function generateAndQueueComicStrip(sessionState, postDetails, imag
             return { success: false, wasCancelled: true };
         }
         summary = approvedSummary;
+
+        const reviewedPanels = await reviewComicPanels(panels || []);
+        if (!reviewedPanels) {
+            console.log('[APP-INFO] Comic strip generation cancelled during panel review.');
+            return { success: false, wasCancelled: true };
+        }
+        panels = reviewedPanels;
 
         const panelImagePaths = [];
         const panelPromptInfos = [];
@@ -472,13 +564,15 @@ export async function generateVirtualInfluencerPost(sessionState, postDetails, i
         }
 
         summary = await getApprovedInput(summary, 'summary') || summary;
+
+        if (dialogue && typeof dialogue === 'string') {
+            try {
+                const { shortenDialogueIfNeeded } = await import('./utils.js');
+                dialogue = await shortenDialogueIfNeeded(textGenerator, dialogue, 12, sessionState);
+            } catch {}
+        }
+
         dialogue = await getApprovedInput(dialogue, 'dialogue') || dialogue;
-        // Non-interactive pre-check: auto-shorten overly long dialogue after approval
-        try {
-            const tg = getTextGenerator(sessionState);
-            const { shortenDialogueIfNeeded } = await import('./utils.js');
-            dialogue = await shortenDialogueIfNeeded(tg, dialogue, 12, sessionState);
-        } catch {}
         backgroundPrompt = await getApprovedInput(backgroundPrompt, 'background prompt') || backgroundPrompt;
 
         const framingChoices = [...(sessionState.framingOptions || []), 'Custom...'].map(c => ({name: c, value: c}));

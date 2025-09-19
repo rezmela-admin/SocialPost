@@ -1,0 +1,6 @@
+{
+  "name": "Historical Event Arc",
+  "description": "Narrate a real-world historical moment with balanced context, stakes, outcomes, and lingering relevance.",
+  "template": "Tell the story of a real historical event using this arc:\n1. Context — set the scene with time, place, and key players.\n2. Spark — describe the catalyst or escalation that set events in motion.\n3. Turning Point — highlight the moment where the outcome hung in the balance.\n4. Outcome — explain what happened next and who was impacted.\n5. Aftermath — cover the short-term reactions or changes that followed.\n6. Legacy — connect the event to its long-term significance or lessons still relevant today.",
+  "example": "Context: In 1848, Paris buzzed with frustration over economic inequality and a rigid monarchy.\n\nSpark: Banquets advocating democratic reform were suddenly banned, angering organizers and citizens alike.\n\nTurning Point: On February 23, protestors clashed with troops; a fatal volley inflamed the city overnight.\n\nOutcome: Louis-Philippe abdicated, and a provisional government proclaimed the Second Republic.\n\nAftermath: Universal male suffrage was introduced, but factional infighting left the republic fragile.\n\nLegacy: The 1848 Revolution showed how quickly pent-up grievances can topple regimes—and how hard it is to build consensus afterward."
+}

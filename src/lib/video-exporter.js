@@ -150,10 +150,12 @@ export async function exportVideoFromPanels(options = {}) {
 
   // Try to read durations from list.txt if exists
   let durationsSec = [];
+  let durationsSource = 'default';
   const listItems = readConcatList(listPath);
   if (__flags.durationsProvided && durations) {
     const arr = parseCommaList(durations)?.map(v => toNumber(v, defaultDuration)) || [];
     durationsSec = ensureArrayLen(arr, panelFiles.length, defaultDuration);
+    durationsSource = 'explicit';
   } else if (listItems && listItems.length) {
     const mapDur = new Map();
     for (const it of listItems) if (it.duration) mapDur.set(it.file.replace(/\\/g, '/'), it.duration);
@@ -161,6 +163,7 @@ export async function exportVideoFromPanels(options = {}) {
       const base = path.basename(p);
       return mapDur.get(base) ?? defaultDuration;
     });
+    durationsSource = 'list';
   } else {
     durationsSec = Array(panelFiles.length).fill(defaultDuration);
   }
@@ -228,6 +231,18 @@ export async function exportVideoFromPanels(options = {}) {
     transPerGap = Array(gaps).fill(transDefault).map((d, i) => mapTransitionName(fromMeta.derivedTrans[i] || d));
   } else {
     transPerGap = Array(Math.max(0, panelFiles.length - 1)).fill(transDefault);
+  }
+
+  const hasXfade = transPerGap.some(t => t && t !== 'none');
+  const durationsAuthoritative = durationsSource !== 'default';
+  if (durationsAuthoritative && hasXfade && transitionDuration > 0) {
+    const adjusted = durationsSec.slice();
+    for (let i = 0; i < transPerGap.length; i++) {
+      if (transPerGap[i] && transPerGap[i] !== 'none') {
+        adjusted[i] = (adjusted[i] || 0) + transitionDuration;
+      }
+    }
+    durationsSec = adjusted;
   }
 
   // Ken Burns per panel
@@ -336,7 +351,10 @@ export async function exportVideoFromPanels(options = {}) {
   args.push('-r', String(fps));
   args.push('-c:v', 'libx264', '-crf', String(qualityCRF), '-preset', preset, '-pix_fmt', 'yuv420p');
   if (audio) {
-    args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
+    args.push('-c:a', 'aac', '-b:a', '192k');
+    if (!(durationsAuthoritative && hasXfade)) {
+      args.push('-shortest');
+    }
   }
   args.push(outPath);
 

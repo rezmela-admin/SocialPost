@@ -572,6 +572,22 @@ async function exportVideoFlow() {
             } catch {}
         }
 
+        const narrationDurPath = path.join(chosenDir, 'narration_durations.json');
+        if (fs.existsSync(narrationDurPath)) {
+            try {
+                const raw = JSON.parse(fs.readFileSync(narrationDurPath, 'utf8'));
+                const durations = Array.isArray(raw?.durations) ? raw.durations.map(Number).filter(d => Number.isFinite(d)) : null;
+                if (durations && durations.length === panelCount) {
+                    initialDurations = durations.map(d => Math.max(0.1, d));
+                    console.log(chalk.gray('[APP-INFO] Loaded per-panel durations from narration_durations.json.'));
+                } else if (durations && durations.length && durations.length !== panelCount) {
+                    console.log(chalk.yellow(`[APP-WARN] narration_durations.json has ${durations.length} entries; expected ${panelCount}. Ignoring.`));
+                }
+            } catch (e) {
+                console.log(chalk.yellow('[APP-WARN] Could not parse narration_durations.json:', e?.message || e));
+            }
+        }
+
         let durationsCSV = null;
         if (panelCount > 0) {
             const wantsEditDurations = await confirmPrompt({ message: `Edit per-panel durations? (${panelCount} panels)`, default: false });
