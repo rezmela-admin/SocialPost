@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { confirm as confirmPrompt, editor, select } from '@inquirer/prompts';
 import { getTextGenerator } from './text-generators/index.js';
 import { addJob } from './queue-manager.js';
@@ -596,7 +596,11 @@ export async function generateVirtualInfluencerPost(sessionState, postDetails, i
         const finalImagePath = path.join(process.cwd(), `post-image-${Date.now()}.png`);
         const editPrompt = `Take the person and their speech bubble from the foreground and place them into a new background: ${backgroundPrompt}`;
         try {
-            execSync(`python edit_image.py "${tempCharacterPath}" "${finalImagePath}" "${editPrompt}"`, { stdio: 'inherit' });
+            const pythonResult = spawnSync('python', ['edit_image.py', tempCharacterPath, finalImagePath, editPrompt], { stdio: 'inherit' });
+            if (pythonResult.error || pythonResult.status !== 0) {
+                const err = pythonResult.error || new Error(`Python process exited with code ${pythonResult.status}`);
+                throw err;
+            }
             console.log(`[APP-SUCCESS] Phase 2 complete: ${finalImagePath}`);
         } catch (error) {
             console.error("[APP-FATAL] Python inpainting script failed.", error);

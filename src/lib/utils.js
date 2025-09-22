@@ -12,11 +12,13 @@ import { spawnSync } from 'child_process';
 
 export async function generateImageWithRetry(imageGenerator, initialPrompt, config, textGenerator, maxRetries = 3) {
     let lastError = null;
-    for (let i = 0; i < maxRetries; i++) {
+    const normalizedRetries = Number.isFinite(maxRetries) ? Math.max(0, Math.floor(maxRetries)) : 0;
+    const attemptCount = Math.max(1, normalizedRetries);
+    for (let i = 0; i < attemptCount; i++) {
         try {
             let currentPrompt = initialPrompt;
             if (i > 0) {
-                console.log(`[APP-INFO] Attempt ${i + 1} of ${maxRetries}. Regenerating a safer prompt...`);
+                console.log(`[APP-INFO] Attempt ${i + 1} of ${attemptCount}. Regenerating a safer prompt...`);
                 const regenPrompt = `The previous cartoon prompt was rejected by the image generation safety system. Please generate a new, alternative prompt for a political cartoon about the same topic that is less likely to be rejected. The original prompt was: "${initialPrompt}"`;
                 currentPrompt = await geminiRequestWithRetry(() => textGenerator.generate(regenPrompt));
                 console.log(`[APP-INFO] New prompt: "${currentPrompt}"`);
@@ -27,16 +29,16 @@ export async function generateImageWithRetry(imageGenerator, initialPrompt, conf
         } catch (error) {
             lastError = error;
             if (error.message && error.message.toLowerCase().includes('safety')) {
-                console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${maxRetries})`);
+                console.warn(`[APP-WARN] Image generation failed due to safety system. Retrying... (${i + 1}/${attemptCount})`);
                 await new Promise(resolve => setTimeout(resolve, 2000));
             } else if (error.message && error.message.includes('Could not find image data in Gemini response.')) {
-                console.warn(`[APP-WARN] No image data returned. Retrying... (${i + 1}/${maxRetries})`);
+                console.warn(`[APP-WARN] No image data returned. Retrying... (${i + 1}/${attemptCount})`);
             } else {
                 throw error;
             }
         }
     }
-    console.error(`[APP-FATAL] Image generation failed after ${maxRetries} attempts.`);
+    console.error(`[APP-FATAL] Image generation failed after ${attemptCount} attempts.`);
     throw lastError;
 }
 

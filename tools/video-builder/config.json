@@ -1,0 +1,30 @@
+{
+  "videoGeneration": {
+    "defaultMode": "zoom",
+    "outputSubdir": "clips",
+    "providers": {
+      "zoom": {
+        "label": "Local Zoom/Fade",
+        "enabled": true
+      },
+      "veo3": {
+        "label": "Google VEO3",
+        "enabled": true,
+        "apiKeyEnv": "GEMINI_API_KEY",
+        "model": "veo-3.0-generate-preview",
+        "aspectRatio": "9:16",
+        "pollIntervalMs": 5000,
+        "timeoutMs": 300000,
+        "maxRetries": 2,
+        "includeImage": false
+      },
+      "veo3Text": {
+        "label": "Google VEO3 (Text)",
+        "enabled": true,
+        "apiKeyEnv": "GEMINI_API_KEY",
+        "model": "veo-3.0-fast-generate-preview",
+        "negativePrompt": "speech bubbles, thought bubbles, captions, subtitles, text overlays, on-screen text"
+      }
+    }
+  }
+}

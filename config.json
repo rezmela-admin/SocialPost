@@ -149,5 +149,16 @@
   },
   "features": {
     "avantgardePromptMapping": false
+  },
+  "videoGeneration": {
+    "providers": {
+      "veo3": {
+        "apiKeyEnv": "VEO3_API_KEY",
+        "model": "veo-3-preview",
+        "pollIntervalMs": 5000,
+        "timeoutMs": 300000,
+        "maxRetries": 2
+      }
+    }
   }
 }
